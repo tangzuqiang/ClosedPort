@@ -8,18 +8,18 @@
 
 ## 截图 / Screenshots
 
-> 截图位于 `docs/screenshots/`，运行 `npm start` 后自行截图替换占位即可。
+> 截图来自真实运行的 ClosedPort（Windows，real `listPorts()` 数据，由 `BrowserWindow.capturePage` 自动采集，非 mock）。位于 [docs/screenshots/](docs/screenshots)。
 
-主窗口 · 平铺视图（Flat）：
+主窗口 · 平铺视图（Flat），右侧多了 `Started by` 列显示每个进程的父级：
 ![main-flat](docs/screenshots/main-flat.png)
 
-主窗口 · 按 EXE 归类视图（Group by EXE）：
+主窗口 · 按 EXE 归类视图（Group by EXE），同一进程的多个端口聚合在一起，可整组 Kill。例图里 `sing-box.exe` 占了 99 个端口，Started by `v2rayN.exe`：
 ![main-grouped](docs/screenshots/main-grouped.png)
 
-文件夹占用扫描（Windows）：
+文件夹占用扫描（Windows 专属）。截图中机器没装 `handle.exe`，UI 顶部明确给出降级提示与解决办法；安装后即可扫到内核态锁：
 ![folder-locks](docs/screenshots/folder-locks.png)
 
-悬浮迷你面板（Always-on-top）：
+悬浮迷你面板（Always-on-top），子行也显示 `by <parent>`：
 ![floating](docs/screenshots/floating.png)
 
 ---
@@ -89,6 +89,19 @@ npm run test:smoke
 ```
 
 测试用例固定无网络依赖。CI 友好。
+
+### 截图回归 Screenshot regen
+
+Electron 主进程内置一个截图模式（real React UI + real ports data + `BrowserWindow.capturePage`）：
+
+```powershell
+# Windows
+$env:CLOSEDPORT_SMOKE = $null
+$env:CLOSEDPORT_SCREENSHOT_DIR = "$PWD\docs\screenshots"
+npm run build; npx electron .
+```
+
+它会自动跑遍 Flat / Group by EXE / Folder / Floating 四个 UI 状态并写出 PNG，然后退出。
 
 ---
 

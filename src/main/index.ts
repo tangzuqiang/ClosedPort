@@ -225,10 +225,181 @@ app.whenReady().then(async () => {
     return;
   }
 
+  // Screenshot hook: when CLOSEDPORT_SCREENSHOT_DIR is set, drive the real UI
+  // through its 4 visible states and write PNGs of each. Real React render,
+  // real listPorts() data, real Electron BrowserWindow.capturePage(). No mocks.
+  if (process.env.CLOSEDPORT_SCREENSHOT_DIR) {
+    try {
+      await captureScreenshots(process.env.CLOSEDPORT_SCREENSHOT_DIR);
+      console.log('[shot] OK');
+    } catch (e) {
+      console.error('[shot] FAIL', e);
+      app.exit(2);
+      return;
+    }
+    app.exit(0);
+    return;
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
 });
+
+async function captureScreenshots(outDir: string): Promise<void> {
+  const fs = await import('fs');
+  const pathMod = await import('path');
+  fs.mkdirSync(outDir, { recursive: true });
+
+  // Wait until the main window's renderer has finished its first
+  // listPorts() round-trip and rendered rows. We poll the DOM with
+  // executeJavaScript instead of relying on a fixed sleep.
+  if (!mainWindow) throw new Error('main window not created');
+  const win = mainWindow;
+  await waitFor(async () => win.webContents.isLoading() === false, 10000);
+  // Give React a moment to mount + first IPC roundtrip
+  await sleep(500);
+  await waitFor(
+    async () => {
+      const has = await win.webContents.executeJavaScript(
+        `document.querySelectorAll('table.table tbody tr').length > 0`
+      );
+      return !!has;
+    },
+    20000
+  ).catch(() => {
+    // It's OK if listPorts is slow on this machine; fallback to fixed wait
+  });
+  await sleep(800);
+
+  await capturePNG(win, pathMod.join(outDir, 'main-flat.png'));
+  console.log('[shot] main-flat.png saved');
+
+  // Switch to "Group by EXE"
+  await win.webContents.executeJavaScript(
+    `(() => {
+       const buttons = Array.from(document.querySelectorAll('.view-switch button'));
+       const target = buttons.find(b => b.textContent && b.textContent.trim() === 'Group by EXE');
+       if (target) target.click();
+       return !!target;
+     })()`
+  );
+  await sleep(500);
+  // Expand groups that have real pids (skip the "Unknown" TIME_WAIT bucket)
+  await win.webContents.executeJavaScript(
+    `(() => {
+       const groups = Array.from(document.querySelectorAll('.group'));
+       const real = groups.filter(g => {
+         const name = g.querySelector('.group-name');
+         return name && (name.textContent || '').trim() !== 'Unknown';
+       }).slice(0, 3);
+       real.forEach(g => {
+         const h = g.querySelector('.group-header');
+         if (h) h.click();
+       });
+       // Scroll the first real group to the top of the viewport
+       if (real[0]) real[0].scrollIntoView({ block: 'start' });
+       return real.length;
+     })()`
+  );
+  await sleep(500);
+  await capturePNG(win, pathMod.join(outDir, 'main-grouped.png'));
+  console.log('[shot] main-grouped.png saved');
+
+  // Switch to Folder tab
+  await win.webContents.executeJavaScript(
+    `(() => {
+       const tabs = Array.from(document.querySelectorAll('.tab'));
+       const target = tabs.find(t => /Folder/i.test(t.textContent || ''));
+       if (target) target.click();
+       return !!target;
+     })()`
+  );
+  await sleep(400);
+  // Try to populate the folder view with a real scan against this project's
+  // own working directory so the screenshot is not just an empty state.
+  const cwd = process.cwd();
+  await win.webContents.executeJavaScript(
+    `(async () => {
+       const input = document.querySelector('input[placeholder*="folder"]');
+       if (input) {
+         const setter = Object.getOwnPropertyDescriptor(
+           window.HTMLInputElement.prototype, 'value'
+         ).set;
+         setter.call(input, ${JSON.stringify(cwd)});
+         input.dispatchEvent(new Event('input', { bubbles: true }));
+       }
+       const btn = Array.from(document.querySelectorAll('button'))
+         .find(b => (b.textContent || '').trim() === 'Scan');
+       if (btn) btn.click();
+       return true;
+     })()`
+  );
+  // Wait up to 8s for the scan to finish (RestartManager can take a few seconds)
+  await waitFor(
+    async () => {
+      const done = await win.webContents.executeJavaScript(
+        `(() => {
+           const btn = Array.from(document.querySelectorAll('button'))
+             .find(b => (b.textContent || '').trim() === 'Scan');
+           if (!btn) return false;
+           // Scan button text becomes "Scanning..." while in flight
+           return !btn.disabled;
+         })()`
+      );
+      return !!done;
+    },
+    8000
+  ).catch(() => {});
+  await sleep(500);
+  await capturePNG(win, pathMod.join(outDir, 'folder-locks.png'));
+  console.log('[shot] folder-locks.png saved');
+
+  // Open the floating window and screenshot it
+  if (!floatingWindow) createFloatingWindow();
+  if (!floatingWindow) throw new Error('floating window not created');
+  const fw = floatingWindow;
+  await waitFor(async () => fw.webContents.isLoading() === false, 10000);
+  await sleep(500);
+  await waitFor(
+    async () => {
+      const has = await fw.webContents.executeJavaScript(
+        `document.querySelectorAll('.floating-item').length > 0`
+      );
+      return !!has;
+    },
+    15000
+  ).catch(() => {});
+  await sleep(600);
+  await capturePNG(fw, pathMod.join(outDir, 'floating.png'));
+  console.log('[shot] floating.png saved');
+}
+
+async function capturePNG(win: BrowserWindow, file: string): Promise<void> {
+  const img = await win.webContents.capturePage();
+  const fs = await import('fs');
+  fs.writeFileSync(file, img.toPNG());
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function waitFor(
+  pred: () => Promise<boolean>,
+  timeoutMs: number
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      if (await pred()) return;
+    } catch {
+      /* keep polling */
+    }
+    await sleep(150);
+  }
+  throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
