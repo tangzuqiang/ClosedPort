@@ -1,0 +1,12 @@
+export const IPC_CHANNELS = {
+  LIST_PORTS: 'ports:list',
+  SCAN_FOLDER: 'folder:scan',
+  KILL_PROCESS: 'process:kill',
+  KILL_PROCESSES: 'process:killMany',
+  SYSTEM_INFO: 'system:info',
+  TOGGLE_FLOATING: 'window:toggleFloating',
+  PICK_FOLDER: 'dialog:pickFolder',
+  REVEAL_IN_FOLDER: 'shell:revealInFolder'
+} as const;
+
+export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
