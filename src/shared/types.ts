@@ -34,6 +34,16 @@ export interface SystemInfo {
   platform: NodeJS.Platform;
   isAdmin: boolean;
   handleAvailable: boolean;
+  /**
+   * True when the "Spawn test ports" diagnostic action is available.
+   * Windows-only; always false on macOS / Linux.
+   */
+  devToolsEnabled: boolean;
+}
+
+export interface SpawnedTestPort {
+  pid: number;
+  port: number;
 }
 
 export interface ListPortsOptions {
@@ -54,4 +64,5 @@ export interface ApiSurface {
   toggleFloating(): Promise<boolean>;
   pickFolder(): Promise<string | null>;
   revealInFolder(filePath: string): Promise<void>;
+  spawnTestPorts(count: number): Promise<SpawnedTestPort[]>;
 }

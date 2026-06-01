@@ -40,7 +40,7 @@ const FloatingPanel: React.FC = () => {
           String(r.pid).includes(q)
       );
     }
-    return list.sort((a, b) => a.localPort - b.localPort);
+    return [...list].sort((a, b) => a.localPort - b.localPort);
   }, [rows, filter]);
 
   const killOne = async (pid: number) => {
@@ -88,10 +88,10 @@ const FloatingPanel: React.FC = () => {
             {loading ? 'Loading...' : 'No matches'}
           </div>
         ) : (
-          filtered.map((r, i) => (
+          filtered.map((r) => (
             <div
               className="floating-item"
-              key={`${r.protocol}-${r.localPort}-${r.pid}-${i}`}
+              key={`${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
             >
               <div className="info">
                 <div className="top">

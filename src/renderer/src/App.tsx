@@ -22,7 +22,10 @@ const App: React.FC = () => {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
-    window.closedport.getSystemInfo().then(setSystemInfo);
+    window.closedport
+      .getSystemInfo()
+      .then(setSystemInfo)
+      .catch(() => setSystemInfo(null));
   }, []);
 
   return (
@@ -58,7 +61,7 @@ const App: React.FC = () => {
       </header>
 
       {tab === 'ports' ? (
-        <PortsView />
+        <PortsView systemInfo={systemInfo} />
       ) : (
         <FolderView systemInfo={systemInfo} />
       )}
@@ -66,7 +69,9 @@ const App: React.FC = () => {
   );
 };
 
-const PortsView: React.FC = () => {
+const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
+  systemInfo
+}) => {
   const [rows, setRows] = useState<PortEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
@@ -220,6 +225,23 @@ const PortsView: React.FC = () => {
     await refresh();
   };
 
+  const spawnTestPorts = async () => {
+    try {
+      const spawned = await window.closedport.spawnTestPorts(5);
+      if (spawned.length === 0) {
+        alert('No test ports were spawned. (This action is Windows-only.)');
+      } else {
+        const list = spawned
+          .map((s) => `pid=${s.pid} port=${s.port}`)
+          .join('\n');
+        alert(`Spawned ${spawned.length} test child process(es):\n${list}`);
+      }
+      await refresh();
+    } catch (err) {
+      alert(`Failed to spawn test ports: ${(err as Error)?.message ?? err}`);
+    }
+  };
+
   return (
     <>
       <div className="toolbar">
@@ -254,6 +276,15 @@ const PortsView: React.FC = () => {
         >
           Kill Selected ({selected.size})
         </button>
+        {systemInfo?.devToolsEnabled && (
+          <button
+            className="ghost"
+            onClick={spawnTestPorts}
+            title="Spawn 5 child processes that bind random ports, for testing kill / release flows. Windows only."
+          >
+            Spawn test ports
+          </button>
+        )}
         <div className="spacer" />
         <span className="badge">
           {viewMode === 'flat'
@@ -289,7 +320,7 @@ const PortsView: React.FC = () => {
             <tbody>
               {filtered.map((r, idx) => (
                 <tr
-                  key={`${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}-${idx}`}
+                  key={`${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
                   className={selected.has(r.pid) ? 'selected' : ''}
                 >
                   <td>
@@ -414,7 +445,7 @@ const PortsView: React.FC = () => {
                       <tbody>
                         {g.items.map((r, i) => (
                           <tr
-                            key={`${g.key}-${r.protocol}-${r.localPort}-${r.pid}-${i}`}
+                            key={`${g.key}-${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
                           >
                             <td>{r.protocol}</td>
                             <td className="mono">

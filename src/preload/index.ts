@@ -19,7 +19,9 @@ const api: ApiSurface = {
   toggleFloating: () => ipcRenderer.invoke(IPC_CHANNELS.TOGGLE_FLOATING),
   pickFolder: () => ipcRenderer.invoke(IPC_CHANNELS.PICK_FOLDER),
   revealInFolder: (filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.REVEAL_IN_FOLDER, filePath)
+    ipcRenderer.invoke(IPC_CHANNELS.REVEAL_IN_FOLDER, filePath),
+  spawnTestPorts: (count: number) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SPAWN_TEST_PORTS, count)
 };
 
 contextBridge.exposeInMainWorld('closedport', api);

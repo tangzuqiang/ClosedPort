@@ -13,6 +13,7 @@ import os from 'os';
 import { listPorts } from './portScanner';
 import { scanFolder, isHandleExeAvailable } from './folderScanner';
 import { killProcess, killProcesses } from './killer';
+import { spawnFakePortHolders } from './devTools';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { SystemInfo } from '../shared/types';
 
@@ -174,10 +175,16 @@ function registerIpc(): void {
       isAdmin = process.getuid?.() === 0;
     }
     const handleAvailable = await isHandleExeAvailable();
+    // The "Spawn test ports" action is a Windows-only diagnostic helper.
+    // It is exposed in dev and in packaged builds (per product
+    // requirement: users want to validate the kill flow on their
+    // installed binary), but always hidden on macOS / Linux.
+    const devToolsEnabled = os.platform() === 'win32';
     return {
       platform: os.platform(),
       isAdmin,
-      handleAvailable
+      handleAvailable,
+      devToolsEnabled
     };
   });
   ipcMain.handle(IPC_CHANNELS.TOGGLE_FLOATING, async () => toggleFloating());
@@ -191,6 +198,13 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.REVEAL_IN_FOLDER, async (_e, p: string) => {
     if (typeof p !== 'string' || !p) return;
     shell.showItemInFolder(p);
+  });
+  ipcMain.handle(IPC_CHANNELS.SPAWN_TEST_PORTS, async (_e, count: number) => {
+    if (process.platform !== 'win32') {
+      return [];
+    }
+    const n = Math.max(1, Math.min(20, Math.floor(count) || 5));
+    return spawnFakePortHolders(n);
   });
 }
 
