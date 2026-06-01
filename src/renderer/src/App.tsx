@@ -16,6 +16,7 @@ interface SortSpec {
 }
 
 type ViewMode = 'flat' | 'grouped';
+type GroupSortKey = 'name' | 'ports' | 'pids';
 
 const App: React.FC = () => {
   const [tab, setTab] = useState<'ports' | 'folder'>('ports');
@@ -60,11 +61,31 @@ const App: React.FC = () => {
         </button>
       </header>
 
-      {tab === 'ports' ? (
+      {/* Both views are kept mounted so toggling tabs doesn't reset
+          filters / sort / expanded groups / scan results. We just hide
+          the inactive one with display:none. */}
+      <div
+        className="tab-pane"
+        style={{
+          display: tab === 'ports' ? 'flex' : 'none',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0
+        }}
+      >
         <PortsView systemInfo={systemInfo} />
-      ) : (
+      </div>
+      <div
+        className="tab-pane"
+        style={{
+          display: tab === 'folder' ? 'flex' : 'none',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0
+        }}
+      >
         <FolderView systemInfo={systemInfo} />
-      )}
+      </div>
     </div>
   );
 };
@@ -80,6 +101,16 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('flat');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [groupSort, setGroupSort] = useState<{
+    key: GroupSortKey;
+    asc: boolean;
+  }>({ key: 'name', asc: true });
+  // Track PIDs we created via the "Spawn test ports" diagnostic so we can
+  // visually highlight them in the list (orange badge / striped row). The
+  // set persists across refreshes and is only cleared when the user clicks
+  // "Clear test markers" or successfully kills them.
+  const [spawnedPids, setSpawnedPids] = useState<Set<number>>(new Set());
+  const [spawnedPorts, setSpawnedPorts] = useState<Set<number>>(new Set());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -116,6 +147,14 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     }
     const { key, asc } = sort;
     list = [...list].sort((a, b) => {
+      // Always float spawned-test rows to the top so the user can see and
+      // verify the kill flow without scrolling. This wins over any column
+      // sort.
+      const aTest =
+        spawnedPids.has(a.pid) || spawnedPorts.has(a.localPort) ? 1 : 0;
+      const bTest =
+        spawnedPids.has(b.pid) || spawnedPorts.has(b.localPort) ? 1 : 0;
+      if (aTest !== bTest) return bTest - aTest;
       const va = a[key];
       const vb = b[key];
       if (va == null && vb == null) return 0;
@@ -129,7 +168,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
         : String(vb).localeCompare(String(va));
     });
     return list;
-  }, [rows, filter, sort]);
+  }, [rows, filter, sort, spawnedPids, spawnedPorts]);
 
   // Aggregate filtered rows by processName (or "Unknown") for the grouped view.
   // Each group exposes the unique pids it owns and the count of port records.
@@ -156,11 +195,23 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       g.items.push(r);
     }
     return Array.from(map.values()).sort((a, b) => {
-      // sort groups by entry count desc, then by name
-      if (b.items.length !== a.items.length) return b.items.length - a.items.length;
-      return a.name.localeCompare(b.name);
+      const dir = groupSort.asc ? 1 : -1;
+      if (groupSort.key === 'ports') {
+        if (a.items.length !== b.items.length) {
+          return (a.items.length - b.items.length) * dir;
+        }
+        return a.name.localeCompare(b.name);
+      }
+      if (groupSort.key === 'pids') {
+        if (a.pids.size !== b.pids.size) {
+          return (a.pids.size - b.pids.size) * dir;
+        }
+        return a.name.localeCompare(b.name);
+      }
+      // name (case-insensitive)
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir;
     });
-  }, [filtered]);
+  }, [filtered, groupSort]);
 
   const toggleSort = (key: SortKey) => {
     setSort((prev) =>
@@ -186,11 +237,32 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     });
   };
 
+  const dropSpawnedFor = (pids: number[]) => {
+    if (pids.length === 0) return;
+    const pidSet = new Set(pids);
+    const portsBeingKilled = new Set<number>();
+    for (const r of rows) {
+      if (pidSet.has(r.pid)) portsBeingKilled.add(r.localPort);
+    }
+    setSpawnedPids((prev) => {
+      const next = new Set(prev);
+      for (const p of pids) next.delete(p);
+      return next;
+    });
+    setSpawnedPorts((prev) => {
+      const next = new Set(prev);
+      for (const port of portsBeingKilled) next.delete(port);
+      return next;
+    });
+  };
+
   const killOne = async (pid: number) => {
     if (!confirm(`Kill PID ${pid}?`)) return;
     const res = await window.closedport.killProcess(pid, true);
     if (!res.success) {
       alert(`Failed to kill ${pid}: ${res.message}`);
+    } else {
+      dropSpawnedFor([pid]);
     }
     await refresh();
   };
@@ -198,16 +270,16 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   const killSelected = async () => {
     if (selected.size === 0) return;
     if (!confirm(`Kill ${selected.size} process(es)?`)) return;
-    const results = await window.closedport.killProcesses(
-      Array.from(selected),
-      true
-    );
+    const pids = Array.from(selected);
+    const results = await window.closedport.killProcesses(pids, true);
     const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       alert(
         `Failed: ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
       );
     }
+    const succeededPids = results.filter((r) => r.success).map((r) => r.pid);
+    dropSpawnedFor(succeededPids);
     setSelected(new Set());
     await refresh();
   };
@@ -222,7 +294,14 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
         `Failed: ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
       );
     }
+    const succeededPids = results.filter((r) => r.success).map((r) => r.pid);
+    dropSpawnedFor(succeededPids);
     await refresh();
+  };
+
+  const clearTestMarkers = () => {
+    setSpawnedPids(new Set());
+    setSpawnedPorts(new Set());
   };
 
   const spawnTestPorts = async () => {
@@ -231,10 +310,20 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       if (spawned.length === 0) {
         alert('No test ports were spawned. (This action is Windows-only.)');
       } else {
-        const list = spawned
-          .map((s) => `pid=${s.pid} port=${s.port}`)
-          .join('\n');
-        alert(`Spawned ${spawned.length} test child process(es):\n${list}`);
+        setSpawnedPids((prev) => {
+          const next = new Set(prev);
+          spawned.forEach((s) => next.add(s.pid));
+          return next;
+        });
+        setSpawnedPorts((prev) => {
+          const next = new Set(prev);
+          spawned.forEach((s) => next.add(s.port));
+          return next;
+        });
+        // Auto-switch to Flat and clear filter so the highlighted rows
+        // are immediately visible without being filtered out.
+        setViewMode('flat');
+        setFilter('');
       }
       await refresh();
     } catch (err) {
@@ -278,11 +367,20 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
         </button>
         {systemInfo?.devToolsEnabled && (
           <button
-            className="ghost"
+            className="test"
             onClick={spawnTestPorts}
-            title="Spawn 5 child processes that bind random ports, for testing kill / release flows. Windows only."
+            title="Diagnostic helper (Windows): spawns 5 child processes that bind random TCP ports. Use the row Kill button or Kill Group to clean them up — they are NOT auto-cleaned until you quit the app."
           >
             Spawn test ports
+          </button>
+        )}
+        {(spawnedPids.size > 0 || spawnedPorts.size > 0) && (
+          <button
+            className="ghost"
+            onClick={clearTestMarkers}
+            title="Forget which rows were spawned by the test helper (does NOT kill the processes)."
+          >
+            Clear test markers ({spawnedPids.size})
           </button>
         )}
         <div className="spacer" />
@@ -318,82 +416,128 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r, idx) => (
-                <tr
-                  key={`${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
-                  className={selected.has(r.pid) ? 'selected' : ''}
-                >
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={selected.has(r.pid)}
-                      onChange={() => toggleSelect(r.pid)}
-                    />
-                  </td>
-                  <td>{r.protocol}</td>
-                  <td className="mono">
-                    {r.localAddress}:{r.localPort}
-                  </td>
-                  <td className="mono">
-                    {r.remoteAddress
-                      ? `${r.remoteAddress}:${r.remotePort ?? ''}`
-                      : '—'}
-                  </td>
-                  <td>{r.state || '—'}</td>
-                  <td className="mono">{r.pid || '—'}</td>
-                  <td title={r.processName}>{r.processName || '—'}</td>
-                  <td
-                    className="mono"
-                    title={
-                      r.parentName
-                        ? `${r.parentName} (pid ${r.parentPid})`
+              {filtered.map((r) => {
+                const isTest =
+                  spawnedPids.has(r.pid) || spawnedPorts.has(r.localPort);
+                const cls = [
+                  selected.has(r.pid) ? 'selected' : '',
+                  isTest ? 'test-port' : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ');
+                return (
+                  <tr
+                    key={`${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
+                    className={cls}
+                  >
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selected.has(r.pid)}
+                        onChange={() => toggleSelect(r.pid)}
+                      />
+                    </td>
+                    <td>{r.protocol}</td>
+                    <td className="mono">
+                      {r.localAddress}:{r.localPort}
+                      {isTest && (
+                        <span className="test-tag" title="Spawned by 'Spawn test ports'">
+                          TEST
+                        </span>
+                      )}
+                    </td>
+                    <td className="mono">
+                      {r.remoteAddress
+                        ? `${r.remoteAddress}:${r.remotePort ?? ''}`
+                        : '—'}
+                    </td>
+                    <td>{r.state || '—'}</td>
+                    <td className="mono">{r.pid || '—'}</td>
+                    <td title={r.processName}>{r.processName || '—'}</td>
+                    <td
+                      className="mono"
+                      title={
+                        r.parentName
+                          ? `${r.parentName} (pid ${r.parentPid})`
+                          : r.parentPid
+                            ? `pid ${r.parentPid}`
+                            : ''
+                      }
+                    >
+                      {r.parentName
+                        ? `${r.parentName} (${r.parentPid})`
                         : r.parentPid
                           ? `pid ${r.parentPid}`
-                          : ''
-                    }
-                  >
-                    {r.parentName
-                      ? `${r.parentName} (${r.parentPid})`
-                      : r.parentPid
-                        ? `pid ${r.parentPid}`
-                        : '—'}
-                  </td>
-                  <td className="mono" title={r.processPath}>
-                    {r.processPath || '—'}
-                  </td>
-                  <td>{r.user || '—'}</td>
-                  <td>
-                    <div className="row-actions">
-                      <button
-                        className="ghost"
-                        disabled={!r.processPath}
-                        onClick={() =>
-                          r.processPath &&
-                          window.closedport.revealInFolder(r.processPath)
-                        }
-                        title="Reveal in folder"
-                      >
-                        Open
-                      </button>
-                      <button
-                        className="danger"
-                        disabled={!r.pid}
-                        onClick={() => killOne(r.pid)}
-                      >
-                        Kill
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                          : '—'}
+                    </td>
+                    <td className="mono" title={r.processPath}>
+                      {r.processPath || '—'}
+                    </td>
+                    <td>{r.user || '—'}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="ghost"
+                          disabled={!r.processPath}
+                          onClick={() =>
+                            r.processPath &&
+                            window.closedport.revealInFolder(r.processPath)
+                          }
+                          title="Reveal in folder"
+                        >
+                          Open
+                        </button>
+                        <button
+                          className="danger"
+                          disabled={!r.pid}
+                          onClick={() => killOne(r.pid)}
+                        >
+                          Kill
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         ) : (
           <div className="group-list">
+            <div className="group-sort-bar">
+              <span className="group-sort-label">Sort by:</span>
+              {(['name', 'ports', 'pids'] as GroupSortKey[]).map((k) => {
+                const active = groupSort.key === k;
+                const arrow = active ? (groupSort.asc ? ' ↑' : ' ↓') : '';
+                return (
+                  <button
+                    key={k}
+                    className={active ? 'primary' : 'ghost'}
+                    onClick={() =>
+                      setGroupSort((prev) =>
+                        prev.key === k
+                          ? { key: k, asc: !prev.asc }
+                          : { key: k, asc: k === 'name' }
+                      )
+                    }
+                  >
+                    {k === 'name' ? 'Name' : k === 'ports' ? 'Ports' : 'PIDs'}
+                    {arrow}
+                  </button>
+                );
+              })}
+            </div>
             {groups.map((g) => {
               const isOpen = expanded.has(g.key);
+              const groupHasTest =
+                g.items.some(
+                  (r) =>
+                    spawnedPids.has(r.pid) || spawnedPorts.has(r.localPort)
+                );
               return (
-                <div className="group" key={g.key}>
+                <div
+                  className={`group${groupHasTest ? ' test-group' : ''}`}
+                  key={g.key}
+                >
                   <div
                     className="group-header"
                     onClick={() => toggleExpand(g.key)}
@@ -443,34 +587,48 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                         </tr>
                       </thead>
                       <tbody>
-                        {g.items.map((r, i) => (
-                          <tr
-                            key={`${g.key}-${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
-                          >
-                            <td>{r.protocol}</td>
-                            <td className="mono">
-                              {r.localAddress}:{r.localPort}
-                            </td>
-                            <td>{r.state || '—'}</td>
-                            <td className="mono">{r.pid || '—'}</td>
-                            <td className="mono">
-                              {r.parentName
-                                ? `${r.parentName} (${r.parentPid})`
-                                : r.parentPid
-                                  ? `pid ${r.parentPid}`
-                                  : '—'}
-                            </td>
-                            <td>
-                              <button
-                                className="danger"
-                                disabled={!r.pid}
-                                onClick={() => killOne(r.pid)}
-                              >
-                                Kill
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                        {g.items.map((r) => {
+                          const isTest =
+                            spawnedPids.has(r.pid) ||
+                            spawnedPorts.has(r.localPort);
+                          return (
+                            <tr
+                              key={`${g.key}-${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
+                              className={isTest ? 'test-port' : ''}
+                            >
+                              <td>{r.protocol}</td>
+                              <td className="mono">
+                                {r.localAddress}:{r.localPort}
+                                {isTest && (
+                                  <span
+                                    className="test-tag"
+                                    title="Spawned by 'Spawn test ports'"
+                                  >
+                                    TEST
+                                  </span>
+                                )}
+                              </td>
+                              <td>{r.state || '—'}</td>
+                              <td className="mono">{r.pid || '—'}</td>
+                              <td className="mono">
+                                {r.parentName
+                                  ? `${r.parentName} (${r.parentPid})`
+                                  : r.parentPid
+                                    ? `pid ${r.parentPid}`
+                                    : '—'}
+                              </td>
+                              <td>
+                                <button
+                                  className="danger"
+                                  disabled={!r.pid}
+                                  onClick={() => killOne(r.pid)}
+                                >
+                                  Kill
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )}

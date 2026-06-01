@@ -72,6 +72,27 @@ button.ghost {
 button.ghost:hover:not(:disabled) {
   background: var(--bg-elev);
 }
+/* Diagnostic / test helper button. Stands out so the user never confuses it
+   with regular actions. Orange outline + subtle striped background. */
+button.test {
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(245, 158, 11, 0.12) 0,
+      rgba(245, 158, 11, 0.12) 6px,
+      rgba(245, 158, 11, 0.04) 6px,
+      rgba(245, 158, 11, 0.04) 12px
+    );
+  border: 1px dashed var(--warning);
+  color: var(--warning);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+button.test:hover:not(:disabled) {
+  background: var(--warning);
+  color: #1a1306;
+  border-style: solid;
+}
 
 input[type='text'], input[type='search'] {
   font: inherit;
@@ -181,6 +202,30 @@ input[type='text']:focus, input[type='search']:focus {
 .table tbody tr.selected {
   background: var(--accent-soft);
 }
+/* Diagnostic-spawned rows: orange-tinted background and a left edge bar so
+   the user can spot the test entries instantly even in a 500-row list. */
+.table tbody tr.test-port {
+  background: rgba(245, 158, 11, 0.10);
+  box-shadow: inset 4px 0 0 var(--warning);
+}
+.table tbody tr.test-port:hover {
+  background: rgba(245, 158, 11, 0.18);
+}
+.table tbody tr.test-port.selected {
+  background: rgba(245, 158, 11, 0.28);
+}
+.test-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: var(--warning);
+  color: #1a1306;
+  border-radius: 3px;
+  vertical-align: middle;
+}
 .table .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
@@ -212,11 +257,33 @@ input[type='text']:focus, input[type='search']:focus {
   flex-direction: column;
   gap: 8px;
 }
+.group-sort-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 0 4px;
+  font-size: 12px;
+}
+.group-sort-label {
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+.group-sort-bar button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
 .group {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-soft);
   overflow: hidden;
+}
+.group.test-group {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.3) inset;
+}
+.group.test-group .group-header {
+  background: rgba(245, 158, 11, 0.08);
 }
 .group-header {
   display: flex;

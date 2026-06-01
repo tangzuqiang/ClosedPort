@@ -1,5 +1,9 @@
 # ClosedPort
 
+<p align="center">
+  <img src="build/icon.png" alt="ClosedPort" width="128" height="128" />
+</p>
+
 > Cross-platform desktop tool to inspect and reclaim listening ports & file locks, with one-click kill, an always-on-top floating panel, and per-EXE grouping.
 
 跨平台桌面小工具：列出系统所有占用的端口与对应进程、查看 Windows 文件夹中谁在占用文件、一键 kill 释放，附带常驻悬浮窗与按 EXE 归类视图。Windows / macOS / Linux 三端通吃。
@@ -32,12 +36,15 @@
 
 - **端口占用一览**：列出全部 TCP / UDP / TCP6 / UDP6 监听与连接，附带 PID、进程名、可执行文件路径、用户、命令行。
 - **启动者 / 父进程**：每条记录都能看到父进程名 + PPID，方便定位"这个端口到底是哪个程序拉起来的子进程占住的"。
-- **按 EXE 归类视图**：当一个进程占用多个端口时，把它们折叠在一起，整组一键 Kill。
+- **按 EXE 归类视图**：当一个进程占用多个端口时，把它们折叠在一起，整组一键 Kill。视图顶部支持按 **Name / Ports / PIDs** 升降序切换（默认按 Name 字母升序）。
+- **Tab 状态保留**：Ports / Folder Locks 两个 Tab 共享生命周期，切换不会清空过滤、排序、展开的分组、已扫描的结果。
+- **System Idle / System (kernel) 桶**：Windows 上 PID 0（TIME_WAIT 占位）和 PID 4（NT 内核 / 驱动 listen）会单独命名归类，不会再混在 "Unknown" 里。
 - **文件夹占用扫描（Windows 专属）**：定位是哪个进程锁住了你工作目录里的文件。优先调用 Sysinternals `handle.exe`（覆盖内核态句柄），缺失时自动回退到 Windows Restart Manager API（覆盖大部分用户态锁，例如编辑器、办公软件、IDE）。
 - **一键 Kill**：单条 / 多选 / 整组三种粒度。Windows 使用 `taskkill /F /T` 顺带终止子进程；macOS/Linux 使用 `SIGKILL`。
 - **悬浮迷你面板**：常驻置顶窗口，在所有桌面（虚拟桌面 / Spaces）可见，可暂停自动刷新。
-- **托盘集成**：单实例锁、托盘菜单切换主窗口 / 悬浮窗 / 退出。
+- **托盘集成**：单实例锁、托盘菜单切换主窗口 / 悬浮窗 / 退出。托盘使用 `build/tray.png`。
 - **零原生依赖**：纯 Node + 平台原生命令行工具，无 native 模块编译需求。
+- **诊断 / 测试按钮（Windows）**：工具栏一个橙色虚线 **Spawn test ports** 按钮，点一下 fork 5 个绑随机端口的子进程，并把它们以橙色高亮 + `TEST` 徽章浮在列表顶部，便于端到端验证 Kill 流程。这些子进程**不会自动清理**，需要你手动用 Kill / Kill Group 释放。Linux / macOS 不显示。
 
 ---
 
@@ -70,7 +77,7 @@ npm run build:main
 npx electron .
 ```
 
-开发模式下，Windows 主窗口会显示一个额外的 **Spawn test ports** 按钮，用于快速创建若干临时占用端口的子进程，方便端到端验证 Kill 流程。生产构建里这个按钮自动隐藏。
+开发模式下，Windows 主窗口会显示一个橙色虚线 **Spawn test ports** 按钮，用于快速创建若干临时占用端口的子进程，方便端到端验证 Kill 流程。点击后，会 spawn 5 个 ELECTRON_RUN_AS_NODE 模式的子进程（PPID 指向当前 ClosedPort），每个 bind 一个随机 TCP 端口；它们会以橙色高亮 + `TEST` 徽章浮在 Flat 列表顶部，**不会自动清理**，需要你点行尾 Kill 或在 Group by EXE 视图下用 Kill Group 主动释放。**注意**：当前为了便于测试，packaged 安装包里这个按钮也保留可用；后续若需要彻底隐藏，把 [src/main/index.ts](src/main/index.ts) 中 `devToolsEnabled` 的判断改成 `os.platform() === 'win32' && !app.isPackaged` 即可。
 
 ---
 
@@ -173,6 +180,19 @@ npm run build; npx electron .
 
 确保系统没禁用"跨桌面置顶"。代码里调用了 `setAlwaysOnTop(true, 'floating')` + `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` + `skipTaskbar`。
 
+### Q：为什么有些行进程名是 "System Idle / TIME_WAIT" 或 "System (Windows kernel)"？
+
+Windows 的 `netstat -ano` 会出现两个特殊 PID：
+
+- **PID 0** — System Idle Process。当一个连接处于 TIME_WAIT 等过渡状态、内核占位但没归属用户态进程时，`netstat` 把它写成 0。我们直接命名为 `System Idle / TIME_WAIT`。
+- **PID 4** — NT 内核（System / ntoskrnl.exe）。SMB、HTTP.sys（IIS / WinRM）、驱动级 listener 全部挂在这个 PID 下。我们命名为 `System (Windows kernel)`，路径填 `C:\Windows\System32\ntoskrnl.exe`。
+
+这两类**杀不掉也不应该尝试杀**。如果你看到一大堆 `System (Windows kernel)` 的 80 / 443 / 5985，说明 IIS / WinRM / HTTP.sys 注册了端口预留，要解除请用 `netsh http delete urlacl` 或停对应的服务。
+
+### Q：Spawn test ports 点了没反应？
+
+修复后 [src/main/devTools.ts](src/main/devTools.ts) 必须把 entry.js 路径作为 `argv[1]` 传进 `spawn`，否则 `ELECTRON_RUN_AS_NODE=1` 模式下 Electron 会进入 Node REPL，永远不会执行 fake-port-holder 分支。如果你魔改了 devTools.ts 又踩到 "No test ports were spawned"，先检查这个。
+
 ---
 
 ## 项目结构 Project layout
@@ -180,11 +200,12 @@ npm run build; npx electron .
 ```
 src/
   main/                 Electron 主进程
-    index.ts            应用启动 / 窗口 / 托盘 / IPC
-    portScanner.ts      端口扫描（netstat / lsof / ss）
+    index.ts            应用启动 / 窗口 / 托盘 / IPC / 默认菜单移除
+    entry.ts            程序入口；CLOSEDPORT_FAKE_PORT_HOLDER=1 时切到 fake-holder 分支
+    portScanner.ts      端口扫描（netstat / lsof / ss），PID 0/4 命名归类
     folderScanner.ts    文件夹句柄扫描（Windows）
     killer.ts           跨平台进程终止
-    devTools.ts         开发模式专用：spawn 测试占端口子进程
+    devTools.ts         开发模式专用：spawn 测试占端口子进程（传 entry.js 作 argv[1]）
     utils/
       exec.ts           child_process.exec 封装 + 超时
       processInfo.ts    进程详情批量预热（单次 PowerShell / Get-CimInstance）
@@ -193,10 +214,19 @@ src/
   renderer/             Vite + React UI
     index.html          主窗口入口
     floating.html       悬浮窗入口
-    src/                React 组件 + 样式
+    src/                React 组件 + 样式（Tab display:none 持久化、TEST 高亮、Group 排序条）
   shared/
     types.ts            PortEntry / FolderHandleEntry / SystemInfo / ApiSurface
     ipc.ts              IPC 通道常量
+
+build/                  app icon 资产（由 scripts/make-icons.ps1 生成）
+  icon.ico              Windows multi-size（16/24/32/48/64/128/256）
+  icon.png              512x512，macOS / Linux / 运行时 BrowserWindow icon
+  tray.png              32x32 托盘图标
+  icons/                单尺寸 PNG（Linux .deb / AppImage）
+
+scripts/
+  make-icons.ps1        从 clean-logo.png 生成 build/icon.ico + 所有尺寸 PNG
 
 tests/
   e2e.js                Backend E2E（不启动 GUI）

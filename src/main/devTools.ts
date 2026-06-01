@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import path from 'path';
 import { app } from 'electron';
 
 // Spawned children we keep track of so we can clean up on app exit.
@@ -13,13 +14,17 @@ export interface SpawnedChild {
  * Spawn N child processes that each bind a random TCP listening port and
  * sit idle until killed. We re-execute the current Electron binary
  * (`process.execPath`) with `ELECTRON_RUN_AS_NODE=1 +
- * CLOSEDPORT_FAKE_PORT_HOLDER=1`; the entry point at `entry.ts` detects
+ * CLOSEDPORT_FAKE_PORT_HOLDER=1`; the entry point at `entry.js` detects
  * those env vars and routes the child into a tiny "bind a TCP port and
  * idle" loop. This means a packaged build does not need any external
  * Node interpreter — the user's installed ClosedPort.exe is itself the
  * host for the fake holders. The children's PPID points back at the
  * main ClosedPort process, which is exactly what we want for end-to-end
  * verification of the "Started by" / Kill flows.
+ *
+ * NOTE: under ELECTRON_RUN_AS_NODE Electron acts as a plain Node
+ * interpreter and will NOT honour the `main` field of any package.json,
+ * so we MUST pass our own entry script as argv[1].
  */
 export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[]> {
   if (process.platform !== 'win32') {
@@ -27,10 +32,13 @@ export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[
   }
   const n = Math.max(1, Math.min(20, Math.floor(count)));
   const exe = process.execPath;
+  // __dirname here is the compiled dist-electron/main directory, so
+  // entry.js sits right next to this file.
+  const entryScript = path.join(__dirname, 'entry.js');
   const results: SpawnedChild[] = [];
 
   for (let i = 0; i < n; i++) {
-    const child = spawn(exe, [], {
+    const child = spawn(exe, [entryScript], {
       env: {
         ...process.env,
         CLOSEDPORT_FAKE_PORT_HOLDER: '1',

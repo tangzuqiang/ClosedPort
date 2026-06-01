@@ -21,9 +21,55 @@ const useDevServer = !!process.env.CLOSEDPORT_DEV_SERVER || process.env.NODE_ENV
 const RENDERER_DEV_URL = process.env.CLOSEDPORT_DEV_URL || 'http://localhost:5173';
 const RENDERER_DIST = path.join(__dirname, '..', '..', 'dist');
 
+// Resolve a brand asset that lives under build/ at dev time and under
+// resources/ inside a packaged app. We try both so the same code works
+// in `npm start`, `electron .`, and the installed exe / dmg / AppImage.
+function resolveBrandAsset(name: string): string | null {
+  const fs = require('fs') as typeof import('fs');
+  const candidates = [
+    path.join(__dirname, '..', '..', 'build', name),
+    path.join(process.resourcesPath || '', 'build', name),
+    path.join(process.resourcesPath || '', name)
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+function getAppIcon(): Electron.NativeImage | undefined {
+  const file =
+    resolveBrandAsset(process.platform === 'win32' ? 'icon.ico' : 'icon.png') ||
+    resolveBrandAsset('icon.png');
+  if (!file) return undefined;
+  try {
+    const img = nativeImage.createFromPath(file);
+    return img.isEmpty() ? undefined : img;
+  } catch {
+    return undefined;
+  }
+}
+
 let mainWindow: BrowserWindow | null = null;
 let floatingWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+// Disable the default Electron application menu (File / Edit / View / Window
+// / Help). ClosedPort is a single-purpose tool and doesn't need them.
+//
+// On macOS we keep a minimal menu — without it the system loses Cmd+Q,
+// Cmd+W, and clipboard shortcuts (Cmd+C / V / X / A / Z) inside text inputs.
+if (process.platform === 'darwin') {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      { role: 'editMenu' },
+      { role: 'windowMenu' }
+    ])
+  );
+} else {
+  Menu.setApplicationMenu(null);
+}
 
 function getRendererPath(htmlFile: string): string {
   if (useDevServer) {
@@ -41,6 +87,7 @@ function loadRenderer(win: BrowserWindow, htmlFile: string): void {
 }
 
 function createMainWindow(): void {
+  const icon = getAppIcon();
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
@@ -49,6 +96,8 @@ function createMainWindow(): void {
     title: 'ClosedPort',
     backgroundColor: '#0f1115',
     show: false,
+    icon,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -56,8 +105,28 @@ function createMainWindow(): void {
       sandbox: false
     }
   });
+  mainWindow.setMenuBarVisibility(false);
   loadRenderer(mainWindow, 'index.html');
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Fallback: if ready-to-show never fires (e.g. renderer failed to load),
+  // still show the window after 3s so the user is not staring at nothing.
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  }, 3000);
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_e, code, desc, url) => {
+      console.error(
+        `[main] did-fail-load code=${code} desc=${desc} url=${url}`
+      );
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+    }
+  );
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error(`[main] render-process-gone reason=${details.reason}`);
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -69,6 +138,7 @@ function createFloatingWindow(): void {
     floatingWindow.focus();
     return;
   }
+  const icon = getAppIcon();
   floatingWindow = new BrowserWindow({
     width: 340,
     height: 460,
@@ -82,6 +152,7 @@ function createFloatingWindow(): void {
     transparent: false,
     backgroundColor: '#0f1115',
     title: 'ClosedPort Floating',
+    icon,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -98,10 +169,29 @@ function createFloatingWindow(): void {
 }
 
 function createTray(): void {
-  // Use a simple in-memory icon to avoid asset coupling.
-  const icon = nativeImage.createEmpty();
+  // Prefer the bundled brand icon. Fall back to a 1x1 transparent PNG only
+  // when the asset is missing (e.g. during a dev run without `build/`).
+  let trayImage: Electron.NativeImage | null = null;
+  const trayFile =
+    resolveBrandAsset('tray.png') || resolveBrandAsset('icon.png');
+  if (trayFile) {
+    try {
+      const img = nativeImage.createFromPath(trayFile);
+      if (!img.isEmpty()) {
+        trayImage =
+          process.platform === 'darwin'
+            ? img.resize({ width: 18, height: 18 })
+            : img.resize({ width: 16, height: 16 });
+      }
+    } catch {
+      trayImage = null;
+    }
+  }
+  if (!trayImage) {
+    trayImage = nativeImage.createFromDataURL(EMPTY_PNG);
+  }
   try {
-    tray = new Tray(icon.isEmpty() ? nativeImage.createFromDataURL(EMPTY_PNG) : icon);
+    tray = new Tray(trayImage);
   } catch {
     return;
   }

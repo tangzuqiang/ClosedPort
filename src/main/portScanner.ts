@@ -29,10 +29,26 @@ export async function listPorts(): Promise<PortEntry[]> {
 
   return raw.map((entry) => {
     const d = detailMap.get(entry.pid);
+    let processName = entry.processName || d?.name;
+    let processPath = entry.processPath || d?.path;
+    // On Windows, netstat surfaces a fair number of sockets owned by
+    // the kernel (PID 4 — "System") or by the System Idle Process
+    // (PID 0 — used by netstat as a placeholder for sockets that have
+    // no owning process anymore, e.g. lingering TIME_WAIT entries).
+    // Without this, the "Group by EXE" view shows a confusing
+    // "Unknown · 0 pids · N ports" bucket. Label them explicitly.
+    if (platform === 'win32' && !processName) {
+      if (entry.pid === 0) {
+        processName = 'System Idle / TIME_WAIT';
+      } else if (entry.pid === 4) {
+        processName = 'System (Windows kernel)';
+        processPath = processPath || 'C:\\Windows\\System32\\ntoskrnl.exe';
+      }
+    }
     return {
       ...entry,
-      processName: entry.processName || d?.name,
-      processPath: entry.processPath || d?.path,
+      processName,
+      processPath,
       user: entry.user || d?.user,
       commandLine: entry.commandLine || d?.commandLine,
       parentPid: d?.parentPid,

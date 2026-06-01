@@ -34,5 +34,5 @@ Inspect & free busy ports across Windows / macOS / Linux. See owner EXE, parent 
 
 ## Suggested website field
 
-(leave blank, or set to your release page once published, e.g.)
-https://github.com/CarGuo/ClosedPort/releases
+(leave blank, or set to your own release page once published, e.g.
+`https://github.com/<your-org>/ClosedPort/releases`)
