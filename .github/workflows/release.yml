@@ -51,15 +51,21 @@ jobs:
 
       - name: List release directory
         shell: bash
-        run: ls -la release
+        run: ls -laR release
 
       - name: Generate SHA256 checksums
         shell: bash
         working-directory: release
         run: |
           set -e
-          shopt -s nullglob
-          files=( *.exe *.dmg *.zip *.AppImage *.deb )
+          # Some electron-builder targets (notably mac universal / dmg
+          # licenses) place files in subdirectories like release/mac/. Walk
+          # up to two levels deep so we hash every artifact, not just the
+          # top-level glob.
+          mapfile -t files < <(find . -maxdepth 2 -type f \
+            \( -name '*.exe' -o -name '*.dmg' -o -name '*.zip' \
+               -o -name '*.AppImage' -o -name '*.deb' \) \
+            | sed 's|^\./||' | sort)
           if [ ${#files[@]} -gt 0 ]; then
             if command -v sha256sum >/dev/null 2>&1; then
               sha256sum "${files[@]}" > SHA256SUMS.txt
@@ -76,11 +82,11 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            release/*.exe
-            release/*.dmg
-            release/*.zip
-            release/*.AppImage
-            release/*.deb
+            release/**/*.exe
+            release/**/*.dmg
+            release/**/*.zip
+            release/**/*.AppImage
+            release/**/*.deb
             release/latest*.yml
             release/SHA256SUMS.txt
           if-no-files-found: warn

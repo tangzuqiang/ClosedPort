@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 
 export interface ExecResult {
   stdout: string;
@@ -28,4 +28,26 @@ export function execCommand(
 
 export function tryExec(command: string): Promise<ExecResult | null> {
   return execCommand(command).catch(() => null);
+}
+
+export function execFileCommand(
+  file: string,
+  args: string[],
+  options: { timeoutMs?: number; maxBuffer?: number } = {}
+): Promise<ExecResult> {
+  const { timeoutMs = 15000, maxBuffer = 1024 * 1024 * 32 } = options;
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      args,
+      { timeout: timeoutMs, maxBuffer, windowsHide: true },
+      (error, stdout, stderr) => {
+        resolve({
+          stdout: stdout?.toString() ?? '',
+          stderr: stderr?.toString() ?? '',
+          code: error ? (typeof error.code === 'number' ? error.code : 1) : 0
+        });
+      }
+    );
+  });
 }

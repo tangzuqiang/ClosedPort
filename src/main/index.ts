@@ -242,12 +242,18 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC_CHANNELS.SCAN_FOLDER, async (_e, options) => {
     if (!options || typeof options.folderPath !== 'string') return [];
-    return scanFolder(options.folderPath);
+    const folderPath = options.folderPath.trim();
+    if (!folderPath || folderPath.length > 1024) return [];
+    return scanFolder(folderPath);
   });
   ipcMain.handle(IPC_CHANNELS.KILL_PROCESS, async (_e, pid: number, force?: boolean) => {
+    if (!Number.isFinite(pid) || pid <= 0) {
+      return { pid: Number(pid) || 0, success: false, message: 'Invalid PID' };
+    }
     return killProcess(pid, force ?? true);
   });
   ipcMain.handle(IPC_CHANNELS.KILL_PROCESSES, async (_e, pids: number[], force?: boolean) => {
+    if (!Array.isArray(pids)) return [];
     return killProcesses(pids, force ?? true);
   });
   ipcMain.handle(IPC_CHANNELS.SYSTEM_INFO, async (): Promise<SystemInfo> => {

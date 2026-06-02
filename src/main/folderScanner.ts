@@ -2,7 +2,7 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import { execCommand, tryExec } from './utils/exec';
+import { execCommand, execFileCommand, tryExec } from './utils/exec';
 import { getProcessDetail } from './utils/processInfo';
 import type { FolderHandleEntry } from '../shared/types';
 
@@ -55,9 +55,13 @@ async function scanWithHandleExe(
   exe: string,
   folderPath: string
 ): Promise<FolderHandleEntry[]> {
-  // -accepteula: skip EULA dialog; -nobanner: cleaner output; -u: show owner
-  const cmd = `"${exe}" -accepteula -nobanner -u "${folderPath}"`;
-  const { stdout } = await execCommand(cmd, { timeoutMs: 30000 });
+  // -accepteula: skip EULA dialog; -nobanner: cleaner output; -u: show owner.
+  // Use execFile (no shell) to avoid command injection via folderPath.
+  const { stdout } = await execFileCommand(
+    exe,
+    ['-accepteula', '-nobanner', '-u', folderPath],
+    { timeoutMs: 30000 }
+  );
 
   const entries: FolderHandleEntry[] = [];
   const lines = stdout.split(/\r?\n/);
@@ -218,9 +222,10 @@ $res | ConvertTo-Json -Compress
 function collectFiles(dir: string, out: string[], limit: number): void {
   try {
     if (!fs.existsSync(dir)) return;
-    out.push(dir);
     const stat = fs.statSync(dir);
     if (!stat.isDirectory()) return;
+    // Restart Manager expects file paths, not directories. Don't push the
+    // folder itself; only push real files inside it.
     const items = fs.readdirSync(dir);
     for (const name of items) {
       if (out.length >= limit) return;
@@ -228,8 +233,6 @@ function collectFiles(dir: string, out: string[], limit: number): void {
       try {
         const st = fs.statSync(full);
         if (st.isFile()) {
-          out.push(full);
-        } else if (st.isDirectory()) {
           out.push(full);
         }
       } catch {

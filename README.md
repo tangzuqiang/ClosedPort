@@ -12,7 +12,7 @@
 
 ## 截图 / Screenshots
 
-> 截图来自真实运行的 ClosedPort（Windows，真实 `listPorts()` 数据，由 `BrowserWindow.capturePage` 自动采集，非 mock）。位于 [docs/screenshots/](docs/screenshots)。
+> 下面这几张图是 ClosedPort 在 Windows 上的真实运行截图（真实 `listPorts()` 数据，未做任何 mock 或 PS）。源文件在 [docs/screenshots/](docs/screenshots)，由维护者偶尔手动重生成（具体方法见本文最后的"截图回归 Screenshot regen"小节）。普通用户**无需关心**这套机制，应用启动时不会自动截图。
 
 主窗口 · 平铺视图（Flat），右侧 `Started by` 列显示每个进程的父级：
 
@@ -36,7 +36,7 @@
 
 - **端口占用一览**：列出全部 TCP / UDP / TCP6 / UDP6 监听与连接，附带 PID、进程名、可执行文件路径、用户、命令行。
 - **启动者 / 父进程**：每条记录都能看到父进程名 + PPID，方便定位"这个端口到底是哪个程序拉起来的子进程占住的"。
-- **按 EXE 归类视图**：当一个进程占用多个端口时，把它们折叠在一起，整组一键 Kill。视图顶部支持按 **Name / Ports / PIDs** 升降序切换（默认按 Name 字母升序）。
+- **按 EXE 归类视图**：当一个进程占用多个端口时，把它们折叠在一起，整组一键 Kill。视图顶部支持按 **Name / Ports / PIDs** 升降序切换（默认按 Name 字母升序，`Unknown` 桶始终置底）。Flat 视图默认按 Local Port 升序。
 - **Tab 状态保留**：Ports / Folder Locks 两个 Tab 共享生命周期，切换不会清空过滤、排序、展开的分组、已扫描的结果。
 - **System Idle / System (kernel) 桶**：Windows 上 PID 0（TIME_WAIT 占位）和 PID 4（NT 内核 / 驱动 listen）会单独命名归类，不会再混在 "Unknown" 里。
 - **文件夹占用扫描（Windows 专属）**：定位是哪个进程锁住了你工作目录里的文件。优先调用 Sysinternals `handle.exe`（覆盖内核态句柄），缺失时自动回退到 Windows Restart Manager API（覆盖大部分用户态锁，例如编辑器、办公软件、IDE）。
@@ -91,6 +91,8 @@ npm run dist:linux   # Linux:   AppImage + deb
 
 打包前如果想让 Windows 文件夹扫描更全面，把 [handle.exe / handle64.exe](https://learn.microsoft.com/en-us/sysinternals/downloads/handle) 拷贝到仓库根目录的 `resources/` 下。`.gitignore` 已经把它们忽略了，不会污染版本库，但 electron-builder 会把这个目录打进发布包。
 
+> macOS 产物**未签名 / 未公证**：双击 dmg / zip 解压后的 `.app` 首次运行会被 Gatekeeper 拦下，需要在「系统设置 → 隐私与安全」里手动放行；或者你 fork 后自行配置 `CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` 这几个 secrets，让 electron-builder 在 CI 里自动签名+公证。Windows 产物同样未签名，下载后 SmartScreen 可能提示「未知发布者」，可在文件属性里勾「解除锁定」。
+
 CI 已配置在 push tag (`v*`) 时为三平台构建产物并发布到 GitHub Releases，详见 [.github/workflows/release.yml](.github/workflows/release.yml)。本地手动发布版本：
 
 ```bash
@@ -118,20 +120,24 @@ npm run test:e2e
 npm run test:smoke
 ```
 
-测试用例固定无网络依赖，CI 友好。CI 在 [.github/workflows/ci.yml](.github/workflows/ci.yml) 里跑三平台 build + e2e。
+测试用例固定无网络依赖，CI 友好。CI 在 [.github/workflows/ci.yml](.github/workflows/ci.yml) 里跑三平台 build + e2e；smoke 因为要 spawn 真实 Electron 二进制（Linux runner 还得 xvfb），暂未进 CI，仅供本地与发布前手动验证。
 
-### 截图回归 Screenshot regen
+### 截图回归 Screenshot regen（维护者使用，普通用户跳过）
 
-Electron 主进程内置一个截图模式（真实 React UI + 真实端口数据 + `BrowserWindow.capturePage`）：
+> ⚠️ **这是仓库维护者用来重新生成 [docs/screenshots/](docs/screenshots) 那几张图的开发者 hook，不是产品功能。**普通用户、贡献者、CI 环境**不要**设置 `CLOSEDPORT_SCREENSHOT_DIR`，否则启动 ClosedPort 时它会进入截图模式：自动驱动 UI 跑一遍 → 写 PNG → **`app.quit()` 直接退出**。
+
+主进程在 [src/main/index.ts](src/main/index.ts) 中 `if (process.env.CLOSEDPORT_SCREENSHOT_DIR)` 这一段会启用这个分支。维护者重生截图：
 
 ```powershell
-# Windows
+# Windows / PowerShell —— 用完务必清除该环境变量，否则下一次启动会再次自动退出
 $env:CLOSEDPORT_SMOKE = $null
 $env:CLOSEDPORT_SCREENSHOT_DIR = "$PWD\docs\screenshots"
 npm run build; npx electron .
+# 跑完后立刻：
+$env:CLOSEDPORT_SCREENSHOT_DIR = $null
 ```
 
-它会自动跑遍 Flat / Group by EXE / Folder / Floating 四个 UI 状态并写出 PNG，然后退出。
+它会依次切到 Flat / Group by EXE / Folder Locks / Floating 四个 UI 状态，每个状态调用一次 `BrowserWindow.capturePage()` 写 PNG，然后退出。
 
 ---
 
@@ -205,9 +211,9 @@ src/
     portScanner.ts      端口扫描（netstat / lsof / ss），PID 0/4 命名归类
     folderScanner.ts    文件夹句柄扫描（Windows）
     killer.ts           跨平台进程终止
-    devTools.ts         开发模式专用：spawn 测试占端口子进程（传 entry.js 作 argv[1]）
+    devTools.ts         "Spawn test ports" 诊断（Windows，dev 与 packaged 都启用；非 win32 隐藏）
     utils/
-      exec.ts           child_process.exec 封装 + 超时
+      exec.ts           child_process exec / execFile 封装 + 超时（folderScanner 用 execFile 避免命令注入）
       processInfo.ts    进程详情批量预热（单次 PowerShell / Get-CimInstance）
   preload/
     index.ts            contextBridge 暴露 API
@@ -226,7 +232,7 @@ build/                  app icon 资产（由 scripts/make-icons.ps1 生成）
   icons/                单尺寸 PNG（Linux .deb / AppImage）
 
 scripts/
-  make-icons.ps1        从 clean-logo.png 生成 build/icon.ico + 所有尺寸 PNG
+  make-icons.ps1        从任意 PNG 生成 build/icon.ico + 所有尺寸 PNG；用 `-Source <path>` 指定源图（默认 assets/logo.png 不在仓库里，直接跑会报 "Source not found"）
 
 tests/
   e2e.js                Backend E2E（不启动 GUI）

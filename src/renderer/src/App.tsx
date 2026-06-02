@@ -111,6 +111,13 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   // "Clear test markers" or successfully kills them.
   const [spawnedPids, setSpawnedPids] = useState<Set<number>>(new Set());
   const [spawnedPorts, setSpawnedPorts] = useState<Set<number>>(new Set());
+  // Authoritative pid -> port map for spawned test holders. Used by
+  // dropSpawnedFor so we don't have to reverse-lookup against `rows`,
+  // which could already be stale after a manual refresh between confirm
+  // and kill.
+  const [spawnedPidToPort, setSpawnedPidToPort] = useState<Map<number, number>>(
+    new Map()
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -194,23 +201,29 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       if (r.pid > 0) g.pids.add(r.pid);
       g.items.push(r);
     }
-    return Array.from(map.values()).sort((a, b) => {
+    const all = Array.from(map.values());
+    // Pull "Unknown" bucket aside so it always renders at the bottom,
+    // regardless of how many ports/pids it aggregates.
+    const unknown = all.filter((g) => g.name === 'Unknown');
+    const named = all.filter((g) => g.name !== 'Unknown');
+    named.sort((a, b) => {
       const dir = groupSort.asc ? 1 : -1;
       if (groupSort.key === 'ports') {
         if (a.items.length !== b.items.length) {
           return (a.items.length - b.items.length) * dir;
         }
-        return a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name) * dir;
       }
       if (groupSort.key === 'pids') {
         if (a.pids.size !== b.pids.size) {
           return (a.pids.size - b.pids.size) * dir;
         }
-        return a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name) * dir;
       }
       // name (case-insensitive)
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) * dir;
     });
+    return [...named, ...unknown];
   }, [filtered, groupSort]);
 
   const toggleSort = (key: SortKey) => {
@@ -240,9 +253,12 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   const dropSpawnedFor = (pids: number[]) => {
     if (pids.length === 0) return;
     const pidSet = new Set(pids);
+    // Resolve ports via the authoritative spawn-time map (avoids reverse
+    // lookup against possibly-stale `rows`).
     const portsBeingKilled = new Set<number>();
-    for (const r of rows) {
-      if (pidSet.has(r.pid)) portsBeingKilled.add(r.localPort);
+    for (const pid of pids) {
+      const port = spawnedPidToPort.get(pid);
+      if (typeof port === 'number') portsBeingKilled.add(port);
     }
     setSpawnedPids((prev) => {
       const next = new Set(prev);
@@ -252,6 +268,11 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     setSpawnedPorts((prev) => {
       const next = new Set(prev);
       for (const port of portsBeingKilled) next.delete(port);
+      return next;
+    });
+    setSpawnedPidToPort((prev) => {
+      const next = new Map(prev);
+      for (const p of pidSet) next.delete(p);
       return next;
     });
   };
@@ -302,6 +323,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   const clearTestMarkers = () => {
     setSpawnedPids(new Set());
     setSpawnedPorts(new Set());
+    setSpawnedPidToPort(new Map());
   };
 
   const spawnTestPorts = async () => {
@@ -318,6 +340,11 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
         setSpawnedPorts((prev) => {
           const next = new Set(prev);
           spawned.forEach((s) => next.add(s.port));
+          return next;
+        });
+        setSpawnedPidToPort((prev) => {
+          const next = new Map(prev);
+          spawned.forEach((s) => next.set(s.pid, s.port));
           return next;
         });
         // Auto-switch to Flat and clear filter so the highlighted rows

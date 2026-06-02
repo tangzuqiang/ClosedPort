@@ -47,6 +47,9 @@ export async function killProcesses(
   pids: number[],
   force = true
 ): Promise<KillResult[]> {
-  const unique = Array.from(new Set(pids));
+  if (!Array.isArray(pids)) return [];
+  const unique = Array.from(new Set(pids))
+    .filter((p) => Number.isFinite(p) && p > 0)
+    .slice(0, 256);
   return Promise.all(unique.map((p) => killProcess(p, force)));
 }
