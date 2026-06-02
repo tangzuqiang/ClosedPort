@@ -104,6 +104,10 @@ function parseNetstat(text: string, out: PortEntry[]): void {
     const localParsed = splitAddrPort(local);
     const remoteParsed = remote ? splitAddrPort(remote) : null;
     if (!localParsed) continue;
+    // Drop wildcard-port rows like "[::]:*" that netstat occasionally
+    // emits. Real LISTENING entries always have a concrete port; a
+    // localPort of 0 here is just visual noise.
+    if (localParsed.port === 0) continue;
     out.push({
       protocol: normalizeProto(proto),
       localAddress: localParsed.address,
@@ -164,6 +168,9 @@ async function runLsof(args: string[]): Promise<string> {
 
 /**
  * Parse lsof's -F (field) output. Records start with 'p' lines.
+ * `pendingProto` / `pendingState` are intentionally function-local: if
+ * we ever call this concurrently (e.g. darwin + linux fallback in the
+ * same process) module-level state would cross-talk between calls.
  */
 function parseLsof(text: string): PortEntry[] {
   const entries: PortEntry[] = [];
@@ -171,6 +178,8 @@ function parseLsof(text: string): PortEntry[] {
   let pid = 0;
   let cmd = '';
   let user = '';
+  let pendingProto: Protocol | '' = '';
+  let pendingState = '';
   for (const line of lines) {
     if (!line) continue;
     const tag = line[0];
@@ -213,9 +222,6 @@ function parseLsof(text: string): PortEntry[] {
   }
   return entries;
 }
-
-let pendingProto: Protocol | '' = '';
-let pendingState = '';
 
 function parseLsofAddress(addr: string): {
   localAddress: string;

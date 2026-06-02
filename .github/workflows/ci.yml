@@ -23,3 +23,31 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:e2e
+
+  test-linux-ss-fallback:
+    # The Linux port scanner prefers `lsof` and falls back to `ss` only
+    # when lsof is missing. The default ubuntu-latest runner ships with
+    # lsof, so the matrix above never exercises the fallback path. This
+    # job removes lsof first and then runs the same e2e suite, so a
+    # regression in `parseSs` is caught at PR time instead of by users
+    # on minimal distros.
+    name: Build + Test (ubuntu, ss fallback)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Remove lsof to force ss fallback
+        run: |
+          sudo apt-get update
+          sudo apt-get remove -y lsof || true
+          if command -v lsof >/dev/null 2>&1; then
+            echo "lsof is still present; ss fallback path will not be exercised"
+            exit 1
+          fi
+          which ss
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:e2e

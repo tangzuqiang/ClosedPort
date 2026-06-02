@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import { randomBytes } from 'crypto';
 import path from 'path';
 import { app } from 'electron';
 
@@ -8,6 +9,7 @@ const spawned = new Set<ChildProcess>();
 export interface SpawnedChild {
   pid: number;
   port: number;
+  token: string;
 }
 
 /**
@@ -25,6 +27,13 @@ export interface SpawnedChild {
  * NOTE: under ELECTRON_RUN_AS_NODE Electron acts as a plain Node
  * interpreter and will NOT honour the `main` field of any package.json,
  * so we MUST pass our own entry script as argv[1].
+ *
+ * Each child gets a per-spawn random TOKEN that the renderer uses to
+ * highlight the corresponding row. This means a recycled OS PID picked
+ * up by an unrelated process after our holder dies cannot inherit the
+ * orange highlight (or, more importantly, the "Kill" affordance the
+ * renderer offers for spawned PIDs). We also pass the parent PID so
+ * the child can self-terminate if its parent dies.
  */
 export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[]> {
   if (process.platform !== 'win32') {
@@ -38,11 +47,14 @@ export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[
   const results: SpawnedChild[] = [];
 
   for (let i = 0; i < n; i++) {
+    const token = randomBytes(8).toString('hex');
     const child = spawn(exe, [entryScript], {
       env: {
         ...process.env,
         CLOSEDPORT_FAKE_PORT_HOLDER: '1',
-        ELECTRON_RUN_AS_NODE: '1'
+        ELECTRON_RUN_AS_NODE: '1',
+        CLOSEDPORT_FAKE_HOLDER_TOKEN: token,
+        CLOSEDPORT_FAKE_HOLDER_PARENT: String(process.pid)
       },
       detached: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -53,8 +65,11 @@ export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[
       continue;
     }
 
-    // The child writes a single line "PORT=<n>" to stdout once it is
-    // listening. We resolve when we see it (or after a 3s timeout).
+    // The child writes a single line "PORT=<n> TOKEN=<t>" to stdout once
+    // it is listening. We resolve when we see it (or after a 3s timeout).
+    // We ONLY accept the line if the echoed token matches what we just
+    // generated, so a confused / malicious binary at process.execPath
+    // can't have its output mistaken for a successful spawn.
     const port = await new Promise<number>((resolve) => {
       let settled = false;
       const settle = (v: number) => {
@@ -67,8 +82,8 @@ export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[
       const timer = setTimeout(() => settle(0), 3000);
       child.stdout?.on('data', (buf: Buffer) => {
         const line = buf.toString('utf8');
-        const m = /PORT=(\d+)/.exec(line);
-        if (m) {
+        const m = /PORT=(\d+)\s+TOKEN=([0-9a-f]+)/.exec(line);
+        if (m && m[2] === token) {
           settle(Number(m[1]));
         }
       });
@@ -80,12 +95,13 @@ export async function spawnFakePortHolders(count: number): Promise<SpawnedChild[
       child.on('exit', () => settle(0));
     });
 
-    spawned.add(child);
-    child.on('exit', () => spawned.delete(child));
     if (port > 0) {
-      results.push({ pid: child.pid, port });
+      spawned.add(child);
+      child.on('exit', () => spawned.delete(child));
+      results.push({ pid: child.pid, port, token });
     } else {
-      // Child failed to bind in time; tear it down so we don't leak it.
+      // Child failed to bind in time (or echoed a wrong token); tear it
+      // down so we don't leak it. Don't add to `spawned` either.
       try {
         child.kill();
       } catch {

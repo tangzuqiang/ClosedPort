@@ -44,6 +44,13 @@ export interface SystemInfo {
 export interface SpawnedTestPort {
   pid: number;
   port: number;
+  /**
+   * Random per-spawn token. Used by the renderer to highlight TEST rows
+   * by (pid + token) rather than pid alone, so a recycled OS PID picked
+   * up by an unrelated process after our holder dies cannot inherit
+   * the orange highlight or the "Kill" affordance.
+   */
+  token: string;
 }
 
 export interface ListPortsOptions {

@@ -136,6 +136,27 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     refresh();
   }, [refresh]);
 
+  // PID-recycle guard: after each refresh, verify that every spawned
+  // (pid, port) pair we still believe in is actually present in `rows`.
+  // If a holder has died and Windows has handed its PID to an unrelated
+  // process, that unrelated process will not also be sitting on our
+  // recorded port, so we drop the marker. This means a recycled PID
+  // can no longer inherit the orange TEST highlight (or, more
+  // critically, the renderer's "this is one of our throw-away children"
+  // semantics that downstream Kill / Kill Group rely on).
+  useEffect(() => {
+    if (spawnedPidToPort.size === 0) return;
+    const stillValid = new Map<number, number>();
+    for (const [pid, port] of spawnedPidToPort) {
+      const matched = rows.some((r) => r.pid === pid && r.localPort === port);
+      if (matched) stillValid.set(pid, port);
+    }
+    if (stillValid.size === spawnedPidToPort.size) return;
+    setSpawnedPidToPort(stillValid);
+    setSpawnedPids(new Set(stillValid.keys()));
+    setSpawnedPorts(new Set(stillValid.values()));
+  }, [rows, spawnedPidToPort]);
+
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     let list = rows;

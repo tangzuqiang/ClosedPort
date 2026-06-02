@@ -202,16 +202,21 @@ input[type='text']:focus, input[type='search']:focus {
 .table tbody tr.selected {
   background: var(--accent-soft);
 }
-/* Diagnostic-spawned rows: orange-tinted background and a left edge bar so
-   the user can spot the test entries instantly even in a 500-row list. */
-.table tbody tr.test-port {
+/* Diagnostic-spawned rows: orange-tinted background and a left edge bar
+   so the user can spot the test entries instantly even in a 500-row
+   list. We render the bar via a `border-left` on the first cell rather
+   than `box-shadow: inset` because `border-collapse: collapse` clips
+   inset shadows at the cell edge in some Chromium zoom levels. */
+.table tbody tr.test-port > td {
   background: rgba(245, 158, 11, 0.10);
-  box-shadow: inset 4px 0 0 var(--warning);
 }
-.table tbody tr.test-port:hover {
+.table tbody tr.test-port > td:first-child {
+  border-left: 4px solid var(--warning);
+}
+.table tbody tr.test-port:hover > td {
   background: rgba(245, 158, 11, 0.18);
 }
-.table tbody tr.test-port.selected {
+.table tbody tr.test-port.selected > td {
   background: rgba(245, 158, 11, 0.28);
 }
 .test-tag {
