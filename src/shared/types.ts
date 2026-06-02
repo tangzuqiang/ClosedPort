@@ -24,6 +24,20 @@ export interface FolderHandleEntry {
   resourcePath: string;
 }
 
+export interface FolderScanMeta {
+  /** Which detection backend produced the result. */
+  backend: 'handle.exe' | 'restart-manager' | 'unsupported';
+  /** Number of files passed to RestartManager (fallback path only). */
+  scannedFileCount?: number;
+  /** False when the path is missing / not a directory. */
+  folderExists: boolean;
+}
+
+export interface FolderScanResult {
+  entries: FolderHandleEntry[];
+  meta: FolderScanMeta;
+}
+
 export interface KillResult {
   pid: number;
   success: boolean;
@@ -65,6 +79,7 @@ export interface ScanFolderOptions {
 export interface ApiSurface {
   listPorts(options?: ListPortsOptions): Promise<PortEntry[]>;
   scanFolder(options: ScanFolderOptions): Promise<FolderHandleEntry[]>;
+  scanFolderEx(options: ScanFolderOptions): Promise<FolderScanResult>;
   killProcess(pid: number, force?: boolean): Promise<KillResult>;
   killProcesses(pids: number[], force?: boolean): Promise<KillResult[]>;
   getSystemInfo(): Promise<SystemInfo>;
@@ -72,4 +87,11 @@ export interface ApiSurface {
   pickFolder(): Promise<string | null>;
   revealInFolder(filePath: string): Promise<void>;
   spawnTestPorts(count: number): Promise<SpawnedTestPort[]>;
+  /**
+   * Resolve a renderer-side {@link File} (typically from a drag-and-drop
+   * payload) to its absolute filesystem path. Uses Electron's
+   * `webUtils.getPathForFile`. Returns `''` when the File has no real
+   * backing path (rare; e.g. clipboard image paste).
+   */
+  resolveDroppedPath(file: File): string;
 }

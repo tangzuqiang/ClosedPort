@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { PortEntry, SystemInfo } from '../../shared/types';
 
 type SortKey =
@@ -27,6 +27,26 @@ const App: React.FC = () => {
       .getSystemInfo()
       .then(setSystemInfo)
       .catch(() => setSystemInfo(null));
+  }, []);
+
+  // Block the browser default for any dragover/drop that escapes the
+  // folder drop-zone. Without this, dropping a file outside the
+  // designated panel would cause Electron to navigate the renderer
+  // away to file:///... — visually identical to the app crashing.
+  useEffect(() => {
+    const prevent = (e: DragEvent) => {
+      // Only suppress when the payload looks like files; leave plain
+      // text drags (selection, etc.) alone.
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('dragover', prevent);
+    window.addEventListener('drop', prevent);
+    return () => {
+      window.removeEventListener('dragover', prevent);
+      window.removeEventListener('drop', prevent);
+    };
   }, []);
 
   return (
@@ -705,6 +725,13 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   >([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastMeta, setLastMeta] = useState<{
+    backend: 'handle.exe' | 'restart-manager' | 'unsupported';
+    scannedFileCount?: number;
+    folderExists: boolean;
+  } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const isWin = systemInfo?.platform === 'win32';
 
@@ -713,18 +740,78 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     if (p) setFolder(p);
   };
 
-  const scan = async () => {
-    if (!folder) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await window.closedport.scanFolder({ folderPath: folder });
-      setRows(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
+  const scan = useCallback(
+    async (target?: string) => {
+      const folderPath = (target ?? folder).trim();
+      if (!folderPath) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await window.closedport.scanFolderEx({ folderPath });
+        setRows(res.entries);
+        setLastMeta(res.meta);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setLastMeta(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [folder]
+  );
+
+  // Drag-and-drop: accept exactly one folder (or one file — we'll
+  // resolve to its parent directory) and trigger an immediate scan.
+  // Drag events fire on every child element, so we count enter/leave
+  // pairs to know when the cursor truly leaves the drop zone.
+  const onDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!isWin) return;
+    dragDepthRef.current += 1;
+    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!isWin) return;
+    e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragOver(false);
+  };
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragOver(false);
+    if (!isWin) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const resolved = window.closedport.resolveDroppedPath(file);
+    if (!resolved) {
+      setError('Could not resolve the dropped item to a filesystem path.');
+      return;
     }
+    // If the user dropped a file, scan its parent directory; the user's
+    // intent is almost always "who's holding things in this folder?".
+    let target = resolved;
+    try {
+      // We can't statSync from the renderer; rely on File.type/empty
+      // string heuristic: directories come through with empty `type`
+      // AND some browsers report size 0. Safer: ask main via a quick
+      // existsSync proxy — but we don't have one. Use a simple rule:
+      // if the path has an extension, treat as file; else folder.
+      const looksLikeFile = /\.[^\\/]+$/.test(resolved);
+      if (looksLikeFile) {
+        const sep = resolved.includes('\\') ? '\\' : '/';
+        const idx = resolved.lastIndexOf(sep);
+        if (idx > 0) target = resolved.slice(0, idx);
+      }
+    } catch {
+      /* fall back to resolved */
+    }
+    setFolder(target);
+    await scan(target);
   };
 
   const killOne = async (pid: number) => {
@@ -750,12 +837,22 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   };
 
   return (
-    <>
+    <div
+      className={`folder-view${isDragOver ? ' is-dragover' : ''}`}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div className="toolbar">
         <div className="path-input">
           <input
             type="text"
-            placeholder="Pick or paste a folder path..."
+            placeholder={
+              isWin
+                ? 'Pick, paste, or drag a folder onto this panel...'
+                : 'Pick or paste a folder path...'
+            }
             value={folder}
             onChange={(e) => setFolder(e.target.value)}
           />
@@ -764,7 +861,7 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
         <button
           className="primary"
           disabled={!folder || loading || !isWin}
-          onClick={scan}
+          onClick={() => scan()}
         >
           {loading ? 'Scanning...' : 'Scan'}
         </button>
@@ -786,11 +883,15 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 
       {isWin && systemInfo && !systemInfo.handleAvailable && (
         <div className="banner">
-          handle.exe (Sysinternals) not detected. Falling back to RestartManager
-          which only catches user-mode locks (Word, Excel, IDEs, etc).
-          Drop <code>handle.exe</code> / <code>handle64.exe</code> into the
-          app's <code>resources/</code> folder, or place it on PATH for full
-          coverage.
+          <strong>Limited mode:</strong> handle.exe (Sysinternals) not
+          detected, so we&apos;re using Windows RestartManager. RM only sees{' '}
+          <em>user-mode exclusive locks</em> (Word/Excel saving, IDE write
+          locks, msbuild output, etc.) — it will <strong>not</strong> show
+          read-only handles, memory-mapped DLLs, directory handles, or a
+          process&apos;s working directory. If you expect a result and get
+          none, drop <code>handle.exe</code> / <code>handle64.exe</code> into
+          the app&apos;s <code>resources/</code> folder (or anywhere on PATH)
+          for full coverage.
         </div>
       )}
 
@@ -799,9 +900,34 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       <div className="content">
         {rows.length === 0 && !loading ? (
           <div className="empty">
-            {folder
-              ? 'No locking processes found (or scan not run yet).'
-              : 'Pick a folder to scan.'}
+            {!folder ? (
+              isWin
+                ? 'Pick a folder, paste a path, or drag a folder onto this panel to scan.'
+                : 'Pick a folder to scan.'
+            ) : lastMeta && !lastMeta.folderExists ? (
+              <>
+                <div>Folder does not exist or is not a directory:</div>
+                <div className="mono" style={{ marginTop: 6 }}>{folder}</div>
+              </>
+            ) : lastMeta && lastMeta.backend === 'restart-manager' ? (
+              <>
+                <div>
+                  Scanned{' '}
+                  <strong>{lastMeta.scannedFileCount ?? 0}</strong> file(s) via
+                  RestartManager — no user-mode lock found.
+                </div>
+                <div style={{ marginTop: 8, opacity: 0.75 }}>
+                  This does <strong>not</strong> mean nothing has the folder
+                  open: RM can&apos;t see read-only handles, mmap&apos;d DLLs,
+                  or processes whose <em>cwd</em> is this folder. Install{' '}
+                  <code>handle.exe</code> for full visibility.
+                </div>
+              </>
+            ) : lastMeta && lastMeta.backend === 'handle.exe' ? (
+              <>No process is holding any handle inside this folder.</>
+            ) : (
+              'No locking processes found (or scan not run yet).'
+            )}
           </div>
         ) : (
           <table className="table">
@@ -838,7 +964,18 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
           </table>
         )}
       </div>
-    </>
+
+      {isDragOver && isWin && (
+        <div className="drop-overlay" aria-hidden="true">
+          <div className="drop-overlay-card">
+            <div className="drop-overlay-title">Drop to scan</div>
+            <div className="drop-overlay-sub">
+              Folder → scanned directly · File → its parent folder is scanned
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 

@@ -12,7 +12,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { listPorts } from './portScanner';
-import { scanFolder, isHandleExeAvailable } from './folderScanner';
+import { scanFolder, scanFolderEx, isHandleExeAvailable } from './folderScanner';
 import { killProcess, killProcesses } from './killer';
 import { spawnFakePortHolders, killAllFakePortHolders } from './devTools';
 import { IPC_CHANNELS } from '../shared/ipc';
@@ -246,6 +246,16 @@ function registerIpc(): void {
     const folderPath = options.folderPath.trim();
     if (!folderPath || folderPath.length > 1024) return [];
     return scanFolder(folderPath);
+  });
+  ipcMain.handle(IPC_CHANNELS.SCAN_FOLDER_EX, async (_e, options) => {
+    const empty = {
+      entries: [],
+      meta: { backend: 'unsupported' as const, folderExists: false }
+    };
+    if (!options || typeof options.folderPath !== 'string') return empty;
+    const folderPath = options.folderPath.trim();
+    if (!folderPath || folderPath.length > 1024) return empty;
+    return scanFolderEx(folderPath);
   });
   ipcMain.handle(IPC_CHANNELS.KILL_PROCESS, async (_e, pid: number, force?: boolean) => {
     if (!Number.isFinite(pid) || pid <= 0) {

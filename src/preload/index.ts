@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type {
   ApiSurface,
@@ -11,6 +11,8 @@ const api: ApiSurface = {
     ipcRenderer.invoke(IPC_CHANNELS.LIST_PORTS),
   scanFolder: (options: ScanFolderOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.SCAN_FOLDER, options),
+  scanFolderEx: (options: ScanFolderOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SCAN_FOLDER_EX, options),
   killProcess: (pid: number, force?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.KILL_PROCESS, pid, force),
   killProcesses: (pids: number[], force?: boolean) =>
@@ -21,7 +23,18 @@ const api: ApiSurface = {
   revealInFolder: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.REVEAL_IN_FOLDER, filePath),
   spawnTestPorts: (count: number) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SPAWN_TEST_PORTS, count)
+    ipcRenderer.invoke(IPC_CHANNELS.SPAWN_TEST_PORTS, count),
+  // webUtils.getPathForFile is the supported replacement for the
+  // deprecated `File.path` property removed in Electron 32. We expose
+  // it via the contextBridge so the renderer can resolve a dropped
+  // file/folder to its absolute path without enabling nodeIntegration.
+  resolveDroppedPath: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return '';
+    }
+  }
 };
 
 contextBridge.exposeInMainWorld('closedport', api);

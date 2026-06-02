@@ -38,17 +38,74 @@ export async function isHandleExeAvailable(): Promise<boolean> {
   return (await resolveHandleExe()) !== null;
 }
 
+export interface FolderScanMeta {
+  /** Which detection backend produced the result. */
+  backend: 'handle.exe' | 'restart-manager' | 'unsupported';
+  /**
+   * For the RestartManager fallback only: how many files we registered
+   * with RM. Lets the renderer say "scanned 312 files, none locked"
+   * instead of just "no results", which is far less confusing when the
+   * user expects every running .exe to count as a "locker".
+   */
+  scannedFileCount?: number;
+  /**
+   * True when the folder existed at scan time; false means we returned
+   * early because the path was missing or not a directory. Renderer
+   * uses this to show a distinct error message.
+   */
+  folderExists: boolean;
+}
+
+export interface FolderScanResult {
+  entries: FolderHandleEntry[];
+  meta: FolderScanMeta;
+}
+
 /**
  * Scan a folder for processes that hold handles to files inside it.
  * Windows-only; on other platforms returns empty.
+ *
+ * Kept for backwards compatibility (e2e + external scripts assert
+ * Array shape). New callers should prefer {@link scanFolderEx} which
+ * also reports backend + scannedFileCount.
  */
 export async function scanFolder(folderPath: string): Promise<FolderHandleEntry[]> {
-  if (os.platform() !== 'win32') return [];
+  const { entries } = await scanFolderEx(folderPath);
+  return entries;
+}
+
+export async function scanFolderEx(folderPath: string): Promise<FolderScanResult> {
+  if (os.platform() !== 'win32') {
+    return {
+      entries: [],
+      meta: { backend: 'unsupported', folderExists: false }
+    };
+  }
+  let folderExists = false;
+  try {
+    folderExists = fs.existsSync(folderPath) && fs.statSync(folderPath).isDirectory();
+  } catch {
+    folderExists = false;
+  }
+  if (!folderExists) {
+    return {
+      entries: [],
+      meta: { backend: 'unsupported', folderExists: false }
+    };
+  }
   const exe = await resolveHandleExe();
   if (exe) {
-    return scanWithHandleExe(exe, folderPath);
+    const entries = await scanWithHandleExe(exe, folderPath);
+    return {
+      entries,
+      meta: { backend: 'handle.exe', folderExists: true }
+    };
   }
-  return scanWithRestartManager(folderPath);
+  const { entries, scannedFileCount } = await scanWithRestartManager(folderPath);
+  return {
+    entries,
+    meta: { backend: 'restart-manager', folderExists: true, scannedFileCount }
+  };
 }
 
 async function scanWithHandleExe(
@@ -110,17 +167,32 @@ async function scanWithHandleExe(
 }
 
 /**
- * Fallback: walk the folder (non-recursive on root, plus the folder itself)
- * and call RmStartSession via PowerShell to detect locking processes.
- * This catches files locked by user-mode apps like Word/Excel/IDEs.
+ * Fallback: walk the folder one directory deep (root + immediate
+ * subdirectories) and call RmStartSession via PowerShell to detect
+ * locking processes. This catches files locked by user-mode apps like
+ * Word/Excel/IDEs.
+ *
+ * Limitations the user should know about (surfaced via {@link FolderScanMeta}):
+ *   - Only user-mode exclusive locks (LockFileEx etc) are detected.
+ *   - Read-only handles, memory-mapped files, directory handles and
+ *     "process cwd" holders are NOT visible to RestartManager. Install
+ *     handle.exe for full coverage.
  */
 async function scanWithRestartManager(
   folderPath: string
-): Promise<FolderHandleEntry[]> {
-  // Build list of files to query (limited to avoid huge sets)
+): Promise<{ entries: FolderHandleEntry[]; scannedFileCount: number }> {
+  // Build list of files to query. We include the folder root and one
+  // level of subdirectories so users scanning e.g. D:\workspace\flutter
+  // don't get an empty result just because the locked file lives in a
+  // subfolder. 2000 is a deliberately conservative cap: RM marshals all
+  // paths into a single PInvoke call and very large arrays can blow up
+  // PowerShell's command-line limit.
   const files: string[] = [];
-  collectFiles(folderPath, files, 500);
-  if (files.length === 0) return [];
+  collectFiles(folderPath, files, 2000);
+  const scannedFileCount = files.length;
+  if (files.length === 0) {
+    return { entries: [], scannedFileCount };
+  }
 
   const psFiles = files
     .map((f) => `'${f.replace(/'/g, "''")}'`)
@@ -188,13 +260,13 @@ $res | ConvertTo-Json -Compress
       { timeoutMs: 30000 }
     );
     const text = stdout.trim();
-    if (!text) return [];
+    if (!text) return { entries: [], scannedFileCount };
     let arr: Array<{ Pid: number; Name: string }>;
     try {
       const parsed = JSON.parse(text);
       arr = Array.isArray(parsed) ? parsed : [parsed];
     } catch {
-      return [];
+      return { entries: [], scannedFileCount };
     }
     const uniquePids = Array.from(new Set(arr.map((a) => a.Pid))).filter(
       (p) => p > 0
@@ -203,13 +275,14 @@ $res | ConvertTo-Json -Compress
       uniquePids.map((p) => getProcessDetail(p))
     );
     const map = new Map(details.map((d) => [d.pid, d]));
-    return arr.map((a) => ({
+    const entries: FolderHandleEntry[] = arr.map((a) => ({
       pid: a.Pid,
       processName: a.Name || map.get(a.Pid)?.name || '',
       processPath: map.get(a.Pid)?.path,
       handleType: 'File',
       resourcePath: folderPath
     }));
+    return { entries, scannedFileCount };
   } finally {
     try {
       fs.unlinkSync(tmpFile);
@@ -219,27 +292,62 @@ $res | ConvertTo-Json -Compress
   }
 }
 
+/**
+ * Collect file paths to register with RestartManager. We descend one
+ * level into immediate subdirectories so a scan of D:\workspace\flutter
+ * also covers D:\workspace\flutter\bin\* etc; full recursion is
+ * deliberately avoided because RM's PInvoke array + PowerShell command
+ * line both have practical caps and most "who's locking my folder?"
+ * cases hit the answer within the first two layers.
+ */
 function collectFiles(dir: string, out: string[], limit: number): void {
   try {
     if (!fs.existsSync(dir)) return;
     const stat = fs.statSync(dir);
     if (!stat.isDirectory()) return;
-    // Restart Manager expects file paths, not directories. Don't push the
-    // folder itself; only push real files inside it.
-    const items = fs.readdirSync(dir);
+    pushFilesAtLevel(dir, out, limit);
+    if (out.length >= limit) return;
+    // One-level recursion into immediate subdirectories.
+    let items: string[] = [];
+    try {
+      items = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
     for (const name of items) {
       if (out.length >= limit) return;
-      const full = path.join(dir, name);
+      const sub = path.join(dir, name);
       try {
-        const st = fs.statSync(full);
-        if (st.isFile()) {
-          out.push(full);
+        const st = fs.statSync(sub);
+        if (st.isDirectory()) {
+          pushFilesAtLevel(sub, out, limit);
         }
       } catch {
-        /* ignore */
+        /* ignore unreadable entry */
       }
     }
   } catch {
     /* ignore */
+  }
+}
+
+function pushFilesAtLevel(dir: string, out: string[], limit: number): void {
+  let items: string[] = [];
+  try {
+    items = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of items) {
+    if (out.length >= limit) return;
+    const full = path.join(dir, name);
+    try {
+      const st = fs.statSync(full);
+      if (st.isFile()) {
+        out.push(full);
+      }
+    } catch {
+      /* ignore unreadable entry */
+    }
   }
 }

@@ -418,6 +418,56 @@ input[type='text']:focus, input[type='search']:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Folder Locks drop-zone. The whole panel acts as a target. We layer
+   a full-cover overlay on top while a drag is hovering so the affordance
+   is unambiguous regardless of where in the panel the cursor is. */
+.folder-view {
+  position: relative;
+  display: contents;
+}
+.folder-view.is-dragover .toolbar,
+.folder-view.is-dragover .content {
+  /* Tone the panel content while the overlay is up so the user sees
+     the overlay is the active surface, not the underlying table. */
+  filter: brightness(0.6);
+  pointer-events: none;
+  user-select: none;
+}
+.drop-overlay {
+  position: fixed;
+  inset: 56px 0 0 0; /* leave the app header visible */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 17, 21, 0.55);
+  border: 2px dashed var(--accent);
+  z-index: 50;
+  pointer-events: none;
+  animation: dropFade 120ms ease-out;
+}
+.drop-overlay-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 22px 28px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.drop-overlay-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.drop-overlay-sub {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+@keyframes dropFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .floating-item button {
   padding: 3px 8px;
   font-size: 11px;
