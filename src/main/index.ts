@@ -9,11 +9,12 @@ import {
   nativeImage
 } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import os from 'os';
 import { listPorts } from './portScanner';
 import { scanFolder, isHandleExeAvailable } from './folderScanner';
 import { killProcess, killProcesses } from './killer';
-import { spawnFakePortHolders } from './devTools';
+import { spawnFakePortHolders, killAllFakePortHolders } from './devTools';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { SystemInfo } from '../shared/types';
 
@@ -292,8 +293,20 @@ function registerIpc(): void {
     return res.filePaths[0];
   });
   ipcMain.handle(IPC_CHANNELS.REVEAL_IN_FOLDER, async (_e, p: string) => {
-    if (typeof p !== 'string' || !p) return;
-    shell.showItemInFolder(p);
+    if (typeof p !== 'string' || !p || p.length > 1024) return;
+    // Only reveal real, existing absolute paths. shell.showItemInFolder
+    // itself doesn't execute code, but rejecting non-absolute / missing /
+    // UNC-style inputs makes the IPC contract explicit and avoids
+    // surprising Explorer windows on a malformed renderer payload.
+    let resolved: string;
+    try {
+      resolved = path.resolve(p);
+    } catch {
+      return;
+    }
+    if (!path.isAbsolute(resolved)) return;
+    if (!fs.existsSync(resolved)) return;
+    shell.showItemInFolder(resolved);
   });
   ipcMain.handle(IPC_CHANNELS.SPAWN_TEST_PORTS, async (_e, count: number) => {
     if (process.platform !== 'win32') {
@@ -328,9 +341,13 @@ app.whenReady().then(async () => {
       console.log('[smoke] OK');
     } catch (e) {
       console.error('[smoke] FAIL', e);
+      // app.exit() bypasses 'before-quit', so reap any spawned holders
+      // here before we hard-exit.
+      killAllFakePortHolders();
       app.exit(2);
       return;
     }
+    killAllFakePortHolders();
     app.exit(0);
     return;
   }
@@ -344,9 +361,11 @@ app.whenReady().then(async () => {
       console.log('[shot] OK');
     } catch (e) {
       console.error('[shot] FAIL', e);
+      killAllFakePortHolders();
       app.exit(2);
       return;
     }
+    killAllFakePortHolders();
     app.exit(0);
     return;
   }

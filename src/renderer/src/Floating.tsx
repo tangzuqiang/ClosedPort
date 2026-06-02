@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import './styles.css';
 import type { PortEntry } from '../../shared/types';
@@ -9,14 +9,32 @@ const FloatingPanel: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // Track mount state + in-flight listPorts so 5s auto-refresh ticks that
+  // arrive while a slow query is still running don't pile up (Windows on
+  // low-end machines can take >5s for the netstat + tasklist + powershell
+  // pipeline). Also guards against StrictMode's mount/unmount/mount cycle
+  // calling setState after unmount.
+  const mountedRef = useRef(true);
+  const inFlightRef = useRef(false);
+
   const refresh = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setLoading(true);
     try {
       const data = await window.closedport.listPorts();
-      setRows(data);
+      if (mountedRef.current) setRows(data);
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      if (mountedRef.current) setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -25,8 +43,21 @@ const FloatingPanel: React.FC = () => {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const t = setInterval(refresh, 5000);
-    return () => clearInterval(t);
+    // Use a self-rescheduling timer instead of setInterval so we always
+    // wait for the previous refresh to settle before queuing the next.
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      await refresh();
+      if (cancelled) return;
+      timer = setTimeout(tick, 5000);
+    };
+    timer = setTimeout(tick, 5000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [autoRefresh, refresh]);
 
   const filtered = useMemo(() => {
@@ -51,19 +82,26 @@ const FloatingPanel: React.FC = () => {
   };
 
   return (
-    <div className="floating">
+    <div className="floating" role="region" aria-label="ClosedPort floating panel">
       <div className="floating-header">
         ClosedPort
         <div className="actions">
           <button
             className="ghost"
             title="Auto refresh (5s)"
+            aria-pressed={autoRefresh}
             onClick={() => setAutoRefresh((v) => !v)}
           >
             {autoRefresh ? 'Pause' : 'Resume'}
           </button>
-          <button className="ghost" onClick={refresh} title="Refresh">
-            Refresh
+          <button
+            className="ghost"
+            onClick={refresh}
+            title="Refresh"
+            aria-busy={loading}
+            disabled={loading}
+          >
+            {loading ? '…' : 'Refresh'}
           </button>
           <button
             className="ghost"
@@ -78,11 +116,12 @@ const FloatingPanel: React.FC = () => {
         <input
           type="search"
           placeholder="port / pid / name"
+          aria-label="Filter ports"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
       </div>
-      <div className="floating-list">
+      <div className="floating-list" role="list">
         {filtered.length === 0 ? (
           <div className="empty" style={{ padding: 24 }}>
             {loading ? 'Loading...' : 'No matches'}
@@ -91,6 +130,7 @@ const FloatingPanel: React.FC = () => {
           filtered.map((r) => (
             <div
               className="floating-item"
+              role="listitem"
               key={`${r.protocol}-${r.localAddress}-${r.localPort}-${r.pid}`}
             >
               <div className="info">
@@ -103,7 +143,11 @@ const FloatingPanel: React.FC = () => {
                   {r.parentName ? ` · by ${r.parentName}` : ''}
                 </div>
               </div>
-              <button className="danger" onClick={() => killOne(r.pid)}>
+              <button
+                className="danger"
+                onClick={() => killOne(r.pid)}
+                aria-label={`Kill ${r.processName || 'process'} pid ${r.pid} on port ${r.localPort}`}
+              >
                 Kill
               </button>
             </div>

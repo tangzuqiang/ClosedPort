@@ -2,13 +2,16 @@ import os from 'os';
 import { execCommand } from './utils/exec';
 import {
   getProcessDetail,
-  preloadProcessDetails,
-  clearProcessCache
+  preloadProcessDetails
 } from './utils/processInfo';
 import type { PortEntry, Protocol } from '../shared/types';
 
 export async function listPorts(): Promise<PortEntry[]> {
-  clearProcessCache();
+  // Note: we intentionally do NOT clearProcessCache() here. processInfo's
+  // 5s TTL is exactly the right window for our refresh cadence (Floating
+  // panel ticks every 5s, main window is on-demand). Clearing on every
+  // entry made the TTL effectively zero and forced a fresh batch
+  // PowerShell / Get-CimInstance for every refresh.
   const platform = os.platform();
   let raw: PortEntry[];
   if (platform === 'win32') {
