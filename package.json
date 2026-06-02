@@ -1,6 +1,6 @@
 {
   "name": "closedport",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cross-platform port & file-handle inspector with one-click kill (Windows / macOS / Linux)",
   "main": "dist-electron/main/entry.js",
   "author": "ClosedPort",
