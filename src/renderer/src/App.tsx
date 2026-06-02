@@ -731,7 +731,6 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     folderExists: boolean;
   } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const dragDepthRef = useRef(0);
 
   const isWin = systemInfo?.platform === 'win32';
 
@@ -760,31 +759,51 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     [folder]
   );
 
-  // Drag-and-drop: accept exactly one folder (or one file — we'll
+  // Drag-and-drop: accept exactly one folder (or one file -- we'll
   // resolve to its parent directory) and trigger an immediate scan.
-  // Drag events fire on every child element, so we count enter/leave
-  // pairs to know when the cursor truly leaves the drop zone.
+  //
+  // Drag events fire on every nested child element (table cells, buttons,
+  // even text nodes), and any time the cursor crosses a child boundary
+  // the browser fires dragleave on the parent followed by dragenter on
+  // the new child. A naive depth-counter approach is fragile: combined
+  // with `pointer-events: none` toggling on children, the counter and
+  // the class state get out of sync and the UI flickers. Instead we look
+  // at `relatedTarget` -- the element the cursor is moving TO. If it's
+  // still inside our wrapper, the leave is bogus and we ignore it.
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const onDragEnter = (e: React.DragEvent) => {
-    e.preventDefault();
     if (!isWin) return;
-    dragDepthRef.current += 1;
-    if (e.dataTransfer.types.includes('Files')) setIsDragOver(true);
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
   };
   const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
     if (!isWin) return;
+    if (!e.dataTransfer.types.includes('Files')) return;
+    // Both preventDefault AND a non-'none' dropEffect are required for
+    // the cursor to show the copy/accept icon AND for `drop` to fire at
+    // all on Chromium. Setting it on every dragover is intentional --
+    // some platforms reset it between events.
+    e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
+    if (!isDragOver) setIsDragOver(true);
   };
   const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-    if (dragDepthRef.current === 0) setIsDragOver(false);
+    if (!isWin) return;
+    // Ignore leaves that are really "the cursor moved from one child to
+    // another inside this wrapper". Only react when relatedTarget is null
+    // (left the window entirely) or sits outside our wrapper.
+    const next = e.relatedTarget as Node | null;
+    if (next && wrapperRef.current?.contains(next)) return;
+    setIsDragOver(false);
   };
   const onDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    dragDepthRef.current = 0;
-    setIsDragOver(false);
     if (!isWin) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
     const resolved = window.closedport.resolveDroppedPath(file);
@@ -799,7 +818,7 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       // We can't statSync from the renderer; rely on File.type/empty
       // string heuristic: directories come through with empty `type`
       // AND some browsers report size 0. Safer: ask main via a quick
-      // existsSync proxy — but we don't have one. Use a simple rule:
+      // existsSync proxy -- but we don't have one. Use a simple rule:
       // if the path has an extension, treat as file; else folder.
       const looksLikeFile = /\.[^\\/]+$/.test(resolved);
       if (looksLikeFile) {
@@ -838,6 +857,7 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 
   return (
     <div
+      ref={wrapperRef}
       className={`folder-view${isDragOver ? ' is-dragover' : ''}`}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}

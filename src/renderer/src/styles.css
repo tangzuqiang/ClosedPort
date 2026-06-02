@@ -419,19 +419,30 @@ input[type='text']:focus, input[type='search']:focus {
   white-space: nowrap;
 }
 
-/* Folder Locks drop-zone. The whole panel acts as a target. We layer
-   a full-cover overlay on top while a drag is hovering so the affordance
-   is unambiguous regardless of where in the panel the cursor is. */
+/* Folder Locks drop-zone. The whole panel acts as a single drag target.
+   We previously used `display: contents` here so the wrapper would vanish
+   from the box tree, but that made the wrapper a non-paint, non-hit-test
+   pseudo-box: drag events could only land on the children, and the moment
+   we toned the children with `pointer-events: none` to highlight the
+   overlay, the cursor would hit-test through, fire dragleave, flip the
+   class off, become hit-testable again, fire dragenter, and so on -- a
+   tight flicker loop. Make this a real flex column instead, so the wrapper
+   itself is the hit target and child events bubble up cleanly. */
 .folder-view {
   position: relative;
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .folder-view.is-dragover .toolbar,
 .folder-view.is-dragover .content {
   /* Tone the panel content while the overlay is up so the user sees
-     the overlay is the active surface, not the underlying table. */
+     the overlay is the active surface. We deliberately do NOT set
+     pointer-events:none here -- doing so would let the cursor hit-test
+     through the (now-transparent-to-events) children, the browser would
+     fire dragleave on the wrapper, and we'd flicker. Visual dim only. */
   filter: brightness(0.6);
-  pointer-events: none;
   user-select: none;
 }
 .drop-overlay {
