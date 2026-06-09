@@ -38,7 +38,9 @@
 
 ![floating](docs/screenshots/floating.png)
 
-> Processes Tab 截图待补；功能上提供 Flat / Group by name / Tree by parent 三视图 + 行级 checkbox + 三态组选 + RSS / Private / Virtual 列原地解释，详见下文。
+**Processes · Group by name 视图** — 同名进程聚合（NVIDIA Overlay × 5、node × 2、nvcontainer × 4…），每组显示总 RSS / 总 CPU%，配 `Kill Group (N)` 一键端整族；顶部还有 Flat / Group / Tree 切换 + 行级 checkbox + 内存列说明：
+
+![processes-grouped](docs/screenshots/processes-grouped.png)
 
 ---
 
