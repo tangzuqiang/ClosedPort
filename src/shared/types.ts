@@ -71,6 +71,63 @@ export interface ListPortsOptions {
   refresh?: boolean;
 }
 
+/**
+ * One row in the Processes tab. Memory figures are all in BYTES so the
+ * renderer can format consistently. We deliberately surface three memory
+ * dimensions because users repeatedly ask for different ones:
+ *   - rss      : "real" physical footprint (Working Set on Windows,
+ *                Resident Set Size on macOS / Linux). Matches Task Manager's
+ *                "Memory (active private working set)" column closely.
+ *   - privateBytes : private commit (Windows: PrivateMemorySize64; mac/linux:
+ *                approximated from RSS - shared, fall back to RSS if the
+ *                kernel doesn't expose it cheaply). What users mean when they
+ *                say "memory this process actually owns".
+ *   - virtualBytes : virtual address space reservation. Useful for spotting
+ *                JIT / sandbox / GPU process bloat. Usually much larger than
+ *                physical and never freed.
+ *
+ * `cpuPercent` is per-process CPU usage averaged over a short window. On
+ * Windows we use `Get-Process .CPU` (total CPU seconds) sampled twice; on
+ * Unix we read `%CPU` from `ps`. May be 0 when sampling hasn't started yet.
+ */
+export interface ProcessEntry {
+  pid: number;
+  parentPid?: number;
+  name: string;
+  path?: string;
+  user?: string;
+  commandLine?: string;
+  rssBytes: number;
+  privateBytes: number;
+  virtualBytes: number;
+  cpuPercent: number;
+  /** Seconds since process started. -1 when unknown. */
+  uptimeSeconds: number;
+  /** Number of threads in the process. -1 when unknown. */
+  threadCount: number;
+}
+
+export interface ListProcessesOptions {
+  /**
+   * Reserved for future "give me a cheap, partial refresh" mode. Today
+   * the list is always a fresh full snapshot.
+   */
+  refresh?: boolean;
+}
+
+export interface ProcessListResult {
+  entries: ProcessEntry[];
+  /** Wall-clock when the snapshot was taken (epoch ms). */
+  capturedAt: number;
+  /**
+   * Identifies the backend used. Useful for the UI to show a tooltip
+   * like "values come from `ps -axo` on this machine".
+   */
+  backend: 'powershell' | 'ps' | 'ps+proc' | 'unsupported';
+  /** Optional human-readable error if the backend partially failed. */
+  warning?: string;
+}
+
 export interface ScanFolderOptions {
   folderPath: string;
   recursive?: boolean;
@@ -78,6 +135,7 @@ export interface ScanFolderOptions {
 
 export interface ApiSurface {
   listPorts(options?: ListPortsOptions): Promise<PortEntry[]>;
+  listProcesses(options?: ListProcessesOptions): Promise<ProcessListResult>;
   scanFolder(options: ScanFolderOptions): Promise<FolderHandleEntry[]>;
   scanFolderEx(options: ScanFolderOptions): Promise<FolderScanResult>;
   killProcess(pid: number, force?: boolean): Promise<KillResult>;

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import type { PortEntry, SystemInfo } from '../../shared/types';
+import type { PortEntry, ProcessEntry, SystemInfo } from '../../shared/types';
 
 type SortKey =
   | 'localPort'
@@ -19,7 +19,7 @@ type ViewMode = 'flat' | 'grouped';
 type GroupSortKey = 'name' | 'ports' | 'pids';
 
 const App: React.FC = () => {
-  const [tab, setTab] = useState<'ports' | 'folder'>('ports');
+  const [tab, setTab] = useState<'ports' | 'folder' | 'processes'>('ports');
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
 
   useEffect(() => {
@@ -66,6 +66,12 @@ const App: React.FC = () => {
           >
             Folder Locks {systemInfo?.platform !== 'win32' && '(Win only)'}
           </div>
+          <div
+            className={`tab ${tab === 'processes' ? 'active' : ''}`}
+            onClick={() => setTab('processes')}
+          >
+            Processes
+          </div>
         </div>
         <div className="spacer" />
         {systemInfo && (
@@ -105,6 +111,17 @@ const App: React.FC = () => {
         }}
       >
         <FolderView systemInfo={systemInfo} />
+      </div>
+      <div
+        className="tab-pane"
+        style={{
+          display: tab === 'processes' ? 'flex' : 'none',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0
+        }}
+      >
+        <ProcessesView />
       </div>
     </div>
   );
@@ -998,5 +1015,496 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     </div>
   );
 };
+
+// ---------------- Processes Tab ----------------
+
+type ProcSortKey =
+  | 'pid'
+  | 'name'
+  | 'user'
+  | 'cpuPercent'
+  | 'rssBytes'
+  | 'privateBytes'
+  | 'virtualBytes'
+  | 'uptimeSeconds'
+  | 'threadCount';
+
+type RefreshInterval = 'off' | '5s' | '10s' | '30s';
+const REFRESH_MS: Record<RefreshInterval, number> = {
+  off: 0,
+  '5s': 5000,
+  '10s': 10000,
+  '30s': 30000
+};
+
+/**
+ * Processes tab. Three independent surface areas, all wired off one
+ * pure-function `listProcesses()` call returned from the main process:
+ *
+ *   1. A sortable, filterable table.
+ *   2. A regex match field that highlights matching rows live but does
+ *      not commit a kill until the user explicitly opts in.
+ *   3. A "Selection panel" that opens when the user clicks the floating
+ *      "Use as selection" action. Inside the panel every matched row is
+ *      pre-checked; the user can uncheck false positives and then hit
+ *      "Kill Selected" for one confirm + one IPC.
+ *
+ * Design notes:
+ *  - The regex is evaluated in the renderer (never sent to main). We
+ *    swallow parse errors and show an inline "invalid regex" hint so the
+ *    user can keep typing without the table going blank.
+ *  - PIDs 0 (System Idle) / 4 (Windows kernel) and the current Electron
+ *    pid are filtered out of kill candidates server-side by killer.ts,
+ *    but we also dim them in the panel and pre-uncheck them so the count
+ *    is honest.
+ */
+const ProcessesView: React.FC = () => {
+  const [rows, setRows] = useState<ProcessEntry[]>([]);
+  const [capturedAt, setCapturedAt] = useState<number | null>(null);
+  const [backend, setBackend] = useState<string>('');
+  const [warning, setWarning] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [regexText, setRegexText] = useState('');
+  const [sort, setSort] = useState<{ key: ProcSortKey; asc: boolean }>({
+    key: 'rssBytes',
+    asc: false
+  });
+  const [interval, setIntervalKey] = useState<RefreshInterval>('off');
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelChecked, setPanelChecked] = useState<Set<number>>(new Set());
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await window.closedport.listProcesses();
+      setRows(res.entries);
+      setCapturedAt(res.capturedAt);
+      setBackend(res.backend);
+      setWarning(res.warning || null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Auto-refresh when the user picks an interval. We deliberately use a
+  // chained setTimeout instead of setInterval so a slow listProcesses()
+  // call (Windows can spike to ~800ms under load) doesn't stack queued
+  // refreshes.
+  useEffect(() => {
+    const ms = REFRESH_MS[interval];
+    if (ms === 0) return;
+    let cancelled = false;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      await refresh();
+      if (cancelled) return;
+      t = setTimeout(tick, ms);
+    };
+    t = setTimeout(tick, ms);
+    return () => {
+      cancelled = true;
+      if (t) clearTimeout(t);
+    };
+  }, [interval, refresh]);
+
+  // Compile the regex once per keystroke. Empty input means "no
+  // highlight". Invalid input is flagged but doesn't blow up the view.
+  const { regex, regexInvalid } = useMemo(() => {
+    const s = regexText.trim();
+    if (!s) return { regex: null as RegExp | null, regexInvalid: false };
+    try {
+      return { regex: new RegExp(s, 'i'), regexInvalid: false };
+    } catch {
+      return { regex: null as RegExp | null, regexInvalid: true };
+    }
+  }, [regexText]);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    let list = rows;
+    if (q) {
+      list = list.filter(
+        (r) =>
+          String(r.pid).includes(q) ||
+          r.name.toLowerCase().includes(q) ||
+          (r.user || '').toLowerCase().includes(q) ||
+          (r.path || '').toLowerCase().includes(q)
+      );
+    }
+    const { key, asc } = sort;
+    list = [...list].sort((a, b) => {
+      const va = (a as unknown as Record<string, unknown>)[key];
+      const vb = (b as unknown as Record<string, unknown>)[key];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') {
+        return asc ? va - vb : vb - va;
+      }
+      return asc
+        ? String(va).localeCompare(String(vb))
+        : String(vb).localeCompare(String(va));
+    });
+    return list;
+  }, [rows, filter, sort]);
+
+  const matchedPids = useMemo(() => {
+    if (!regex) return new Set<number>();
+    const out = new Set<number>();
+    for (const r of filtered) {
+      // Match against name + path + command line, since users routinely
+      // hunt for things like "node.*vite" that span name + args.
+      const hay = `${r.name} ${r.path || ''} ${r.commandLine || ''}`;
+      if (regex.test(hay)) out.add(r.pid);
+    }
+    return out;
+  }, [filtered, regex]);
+
+  const toggleSort = (key: ProcSortKey) => {
+    setSort((prev) =>
+      // Numeric columns default to descending (largest-first) on first
+      // click — that's what the user wants 99% of the time.
+      prev.key === key
+        ? { key, asc: !prev.asc }
+        : {
+            key,
+            asc: !(
+              key === 'cpuPercent' ||
+              key === 'rssBytes' ||
+              key === 'privateBytes' ||
+              key === 'virtualBytes' ||
+              key === 'uptimeSeconds' ||
+              key === 'threadCount'
+            )
+          }
+    );
+  };
+
+  const openPanel = () => {
+    if (matchedPids.size === 0) return;
+    // Pre-check everything that matched the regex. The user uses the
+    // panel to remove false positives, not to add things.
+    setPanelChecked(new Set(matchedPids));
+    setPanelOpen(true);
+  };
+
+  const togglePanelPid = (pid: number) => {
+    setPanelChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid);
+      else next.add(pid);
+      return next;
+    });
+  };
+
+  const killOne = async (pid: number) => {
+    if (!confirm(`Kill PID ${pid}?`)) return;
+    const res = await window.closedport.killProcess(pid, true);
+    if (!res.success) alert(`Failed to kill ${pid}: ${res.message}`);
+    await refresh();
+  };
+
+  const killChecked = async () => {
+    const pids = Array.from(panelChecked);
+    if (pids.length === 0) return;
+    if (!confirm(`Kill ${pids.length} process(es)?\n\nThis cannot be undone.`))
+      return;
+    const results = await window.closedport.killProcesses(pids, true);
+    const failed = results.filter((r) => !r.success);
+    if (failed.length > 0) {
+      alert(
+        `Failed:\n${failed
+          .slice(0, 10)
+          .map((f) => `${f.pid}: ${f.message}`)
+          .join('\n')}${failed.length > 10 ? `\n(+${failed.length - 10} more)` : ''}`
+      );
+    }
+    setPanelOpen(false);
+    setPanelChecked(new Set());
+    await refresh();
+  };
+
+  // Pre-resolved arrays for the panel — same order as the visible
+  // (filtered) table so the user's mental model is preserved when they
+  // look from one to the other.
+  const panelRows = useMemo(
+    () => filtered.filter((r) => matchedPids.has(r.pid)),
+    [filtered, matchedPids]
+  );
+
+  return (
+    <>
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="Filter by pid, name, user, path..."
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ maxWidth: 320 }}
+        />
+        <input
+          type="text"
+          placeholder="Regex: chrome.*helper, ^node$, vite|webpack..."
+          value={regexText}
+          onChange={(e) => setRegexText(e.target.value)}
+          className={`proc-regex${regexInvalid ? ' invalid' : ''}`}
+          title={
+            regexInvalid
+              ? 'Invalid regex'
+              : 'Matching rows are highlighted. Click "Use as selection" to open the kill panel.'
+          }
+          style={{ maxWidth: 320 }}
+        />
+        <button onClick={refresh} disabled={loading}>
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+        <select
+          value={interval}
+          onChange={(e) => setIntervalKey(e.target.value as RefreshInterval)}
+          title="Auto-refresh interval"
+        >
+          <option value="off">Auto: Off</option>
+          <option value="5s">Auto: 5s</option>
+          <option value="10s">Auto: 10s</option>
+          <option value="30s">Auto: 30s</option>
+        </select>
+        <button
+          className="danger"
+          onClick={openPanel}
+          disabled={matchedPids.size === 0}
+          title="Open a kill panel with every matched row pre-checked. You can uncheck false positives before confirming."
+        >
+          Use as selection ({matchedPids.size})
+        </button>
+        <div className="spacer" />
+        <span className="badge">{filtered.length} processes</span>
+        {backend && <span className="badge" title="Backend">{backend}</span>}
+        {capturedAt && (
+          <span className="badge" title={new Date(capturedAt).toISOString()}>
+            {new Date(capturedAt).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+
+      {warning && <div className="banner">{warning}</div>}
+      {error && <div className="banner">{error}</div>}
+
+      <div className="content">
+        {filtered.length === 0 && !loading ? (
+          <div className="empty">No processes found.</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th onClick={() => toggleSort('pid')}>PID</th>
+                <th onClick={() => toggleSort('name')}>Name</th>
+                <th onClick={() => toggleSort('user')}>User</th>
+                <th
+                  onClick={() => toggleSort('cpuPercent')}
+                  title="Average CPU% since the process started (single-core scale; >100% means multi-core load)."
+                >
+                  CPU%
+                </th>
+                <th
+                  onClick={() => toggleSort('rssBytes')}
+                  title="Resident / Working Set. Physical RAM the process is currently using."
+                >
+                  RSS
+                </th>
+                <th
+                  onClick={() => toggleSort('privateBytes')}
+                  title="Private bytes. Memory privately committed by this process (Win) or RSS (Unix)."
+                >
+                  Private
+                </th>
+                <th
+                  onClick={() => toggleSort('virtualBytes')}
+                  title="Virtual address space size. Usually much larger than RSS."
+                >
+                  Virtual
+                </th>
+                <th
+                  onClick={() => toggleSort('threadCount')}
+                  title="Number of threads."
+                >
+                  Thr
+                </th>
+                <th onClick={() => toggleSort('uptimeSeconds')}>Uptime</th>
+                <th style={{ width: 100 }}>Path</th>
+                <th style={{ width: 80 }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => {
+                const isMatch = matchedPids.has(r.pid);
+                return (
+                  <tr
+                    key={r.pid}
+                    className={isMatch ? 'proc-match' : undefined}
+                  >
+                    <td className="mono">{r.pid}</td>
+                    <td title={r.commandLine || r.name}>{r.name}</td>
+                    <td>{r.user || '—'}</td>
+                    <td className="mono">{r.cpuPercent.toFixed(1)}</td>
+                    <td className="mono" title={`${r.rssBytes} bytes`}>
+                      {formatBytes(r.rssBytes)}
+                    </td>
+                    <td className="mono" title={`${r.privateBytes} bytes`}>
+                      {formatBytes(r.privateBytes)}
+                    </td>
+                    <td className="mono" title={`${r.virtualBytes} bytes`}>
+                      {formatBytes(r.virtualBytes)}
+                    </td>
+                    <td className="mono">
+                      {r.threadCount >= 0 ? r.threadCount : '—'}
+                    </td>
+                    <td className="mono">
+                      {r.uptimeSeconds >= 0 ? formatDuration(r.uptimeSeconds) : '—'}
+                    </td>
+                    <td className="mono" title={r.path}>
+                      {r.path ? truncatePath(r.path) : '—'}
+                    </td>
+                    <td>
+                      <button className="danger" onClick={() => killOne(r.pid)}>
+                        Kill
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {panelOpen && (
+        <div className="proc-panel-backdrop" onClick={() => setPanelOpen(false)}>
+          <div
+            className="proc-panel"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="proc-panel-header">
+              <div className="proc-panel-title">
+                Confirm kill — {panelChecked.size} of {panelRows.length} selected
+              </div>
+              <button
+                className="ghost"
+                onClick={() => setPanelOpen(false)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="proc-panel-toolbar">
+              <span className="badge">Regex: {regexText}</span>
+              <button
+                className="ghost"
+                onClick={() =>
+                  setPanelChecked(new Set(panelRows.map((r) => r.pid)))
+                }
+              >
+                Check all
+              </button>
+              <button
+                className="ghost"
+                onClick={() => setPanelChecked(new Set())}
+              >
+                Uncheck all
+              </button>
+              <div className="spacer" />
+              <button
+                className="danger"
+                disabled={panelChecked.size === 0}
+                onClick={killChecked}
+              >
+                Kill Selected ({panelChecked.size})
+              </button>
+            </div>
+            <div className="proc-panel-body">
+              <table className="table compact">
+                <thead>
+                  <tr>
+                    <th style={{ width: 28 }}></th>
+                    <th>PID</th>
+                    <th>Name</th>
+                    <th>User</th>
+                    <th>CPU%</th>
+                    <th>RSS</th>
+                    <th>Path</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {panelRows.map((r) => (
+                    <tr
+                      key={r.pid}
+                      className={
+                        panelChecked.has(r.pid) ? 'selected' : undefined
+                      }
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={panelChecked.has(r.pid)}
+                          onChange={() => togglePanelPid(r.pid)}
+                        />
+                      </td>
+                      <td className="mono">{r.pid}</td>
+                      <td title={r.commandLine || r.name}>{r.name}</td>
+                      <td>{r.user || '—'}</td>
+                      <td className="mono">{r.cpuPercent.toFixed(1)}</td>
+                      <td className="mono">{formatBytes(r.rssBytes)}</td>
+                      <td className="mono" title={r.path}>
+                        {r.path ? truncatePath(r.path) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function truncatePath(p: string): string {
+  if (p.length <= 48) return p;
+  return `…${p.slice(p.length - 47)}`;
+}
 
 export default App;

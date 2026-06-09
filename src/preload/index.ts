@@ -3,12 +3,15 @@ import { IPC_CHANNELS } from '../shared/ipc';
 import type {
   ApiSurface,
   ListPortsOptions,
+  ListProcessesOptions,
   ScanFolderOptions
 } from '../shared/types';
 
 const api: ApiSurface = {
   listPorts: (_options?: ListPortsOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.LIST_PORTS),
+  listProcesses: (options?: ListProcessesOptions) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LIST_PROCESSES, options),
   scanFolder: (options: ScanFolderOptions) =>
     ipcRenderer.invoke(IPC_CHANNELS.SCAN_FOLDER, options),
   scanFolderEx: (options: ScanFolderOptions) =>

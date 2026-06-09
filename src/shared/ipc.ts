@@ -1,5 +1,6 @@
 export const IPC_CHANNELS = {
   LIST_PORTS: 'ports:list',
+  LIST_PROCESSES: 'processes:list',
   SCAN_FOLDER: 'folder:scan',
   SCAN_FOLDER_EX: 'folder:scanEx',
   KILL_PROCESS: 'process:kill',

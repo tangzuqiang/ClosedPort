@@ -12,6 +12,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { listPorts } from './portScanner';
+import { listProcesses } from './processList';
 import { scanFolder, scanFolderEx, isHandleExeAvailable } from './folderScanner';
 import { killProcess, killProcesses } from './killer';
 import { spawnFakePortHolders, killAllFakePortHolders } from './devTools';
@@ -240,6 +241,9 @@ const EMPTY_PNG =
 function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.LIST_PORTS, async () => {
     return listPorts();
+  });
+  ipcMain.handle(IPC_CHANNELS.LIST_PROCESSES, async () => {
+    return listProcesses();
   });
   ipcMain.handle(IPC_CHANNELS.SCAN_FOLDER, async (_e, options) => {
     if (!options || typeof options.folderPath !== 'string') return [];
