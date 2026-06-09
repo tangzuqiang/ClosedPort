@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [features.md](./features.md) | 完整功能 / UI 细节：Ports / Processes 三视图 + 内存批量释放 / Folder Locks |
 | [development.md](./development.md) | 开发模式、热更新、诊断按钮 (Spawn test ports) |
 | [packaging.md](./packaging.md) | electron-builder 打包、handle.exe 内嵌、签名/公证状态、Release 流程 |
 | [testing.md](./testing.md) | E2E / Smoke 测试、CI 双 Linux 矩阵、截图回归脚本 |
