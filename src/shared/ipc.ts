@@ -6,6 +6,7 @@ export const IPC_CHANNELS = {
   KILL_PROCESS: 'process:kill',
   KILL_PROCESSES: 'process:killMany',
   SYSTEM_INFO: 'system:info',
+  SYSTEM_MEMORY: 'system:memory',
   TOGGLE_FLOATING: 'window:toggleFloating',
   PICK_FOLDER: 'dialog:pickFolder',
   REVEAL_IN_FOLDER: 'shell:revealInFolder',

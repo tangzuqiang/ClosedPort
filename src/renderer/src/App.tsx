@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import type { PortEntry, ProcessEntry, SystemInfo } from '../../shared/types';
+import type { PortEntry, ProcessEntry, SystemInfo, SystemMemoryInfo } from '../../shared/types';
+import { LanguageContext, useT } from './i18n';
 
 type SortKey =
   | 'localPort'
@@ -21,6 +22,8 @@ type GroupSortKey = 'name' | 'ports' | 'pids';
 const App: React.FC = () => {
   const [tab, setTab] = useState<'ports' | 'folder' | 'processes'>('ports');
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const t = useT();
+  const { lang, setLang } = React.useContext(LanguageContext);
 
   useEffect(() => {
     window.closedport
@@ -53,24 +56,39 @@ const App: React.FC = () => {
     <div className="app">
       <header className="app-header">
         <span className="brand">ClosedPort</span>
+        <div className="lang-switch" role="group" aria-label="Language">
+          <button
+            className={lang === 'en' ? 'lang-active' : ''}
+            onClick={() => setLang('en')}
+          >
+            {t('lang.en')}
+          </button>
+          <button
+            className={lang === 'zh' ? 'lang-active' : ''}
+            onClick={() => setLang('zh')}
+          >
+            {t('lang.zh')}
+          </button>
+        </div>
         <div className="tabs">
           <div
             className={`tab ${tab === 'ports' ? 'active' : ''}`}
             onClick={() => setTab('ports')}
           >
-            Ports
+            {t('tab.ports')}
           </div>
           <div
             className={`tab ${tab === 'folder' ? 'active' : ''}`}
             onClick={() => setTab('folder')}
           >
-            Folder Locks {systemInfo?.platform !== 'win32' && '(Win only)'}
+            {t('tab.folder')}{' '}
+            {systemInfo?.platform !== 'win32' && t('tab.folder.winOnly')}
           </div>
           <div
             className={`tab ${tab === 'processes' ? 'active' : ''}`}
             onClick={() => setTab('processes')}
           >
-            Processes
+            {t('tab.processes')}
           </div>
         </div>
         <div className="spacer" />
@@ -78,12 +96,12 @@ const App: React.FC = () => {
           <>
             <span className="badge">{systemInfo.platform}</span>
             <span className={`badge ${systemInfo.isAdmin ? 'ok' : 'warn'}`}>
-              {systemInfo.isAdmin ? 'Elevated' : 'Standard'}
+              {systemInfo.isAdmin ? t('common.elevated') : t('common.standard')}
             </span>
           </>
         )}
         <button onClick={() => window.closedport.toggleFloating()}>
-          Floating
+          {t('common.floating')}
         </button>
       </header>
 
@@ -130,6 +148,7 @@ const App: React.FC = () => {
 const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   systemInfo
 }) => {
+  const t = useT();
   const [rows, setRows] = useState<PortEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
@@ -336,10 +355,10 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   };
 
   const killOne = async (pid: number) => {
-    if (!confirm(`Kill PID ${pid}?`)) return;
+    if (!confirm(t('ports.killOneConfirm').replace('{pid}', String(pid)))) return;
     const res = await window.closedport.killProcess(pid, true);
     if (!res.success) {
-      alert(`Failed to kill ${pid}: ${res.message}`);
+      alert(`${t('ports.failed')} ${pid}: ${res.message}`);
     } else {
       dropSpawnedFor([pid]);
     }
@@ -348,13 +367,13 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 
   const killSelected = async () => {
     if (selected.size === 0) return;
-    if (!confirm(`Kill ${selected.size} process(es)?`)) return;
+    if (!confirm(t('ports.killManyConfirm').replace('{n}', String(selected.size)))) return;
     const pids = Array.from(selected);
     const results = await window.closedport.killProcesses(pids, true);
     const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       alert(
-        `Failed: ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
+        `${t('ports.failed')} ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
       );
     }
     const succeededPids = results.filter((r) => r.success).map((r) => r.pid);
@@ -365,12 +384,12 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 
   const killGroup = async (pids: number[]) => {
     if (pids.length === 0) return;
-    if (!confirm(`Kill all ${pids.length} process(es) in this group?`)) return;
+    if (!confirm(t('ports.killGroupConfirm').replace('{n}', String(pids.length)))) return;
     const results = await window.closedport.killProcesses(pids, true);
     const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       alert(
-        `Failed: ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
+        `${t('ports.failed')} ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
       );
     }
     const succeededPids = results.filter((r) => r.success).map((r) => r.pid);
@@ -388,7 +407,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     try {
       const spawned = await window.closedport.spawnTestPorts(5);
       if (spawned.length === 0) {
-        alert('No test ports were spawned. (This action is Windows-only.)');
+        alert(t('ports.testSpawnedNone'));
       } else {
         setSpawnedPids((prev) => {
           const next = new Set(prev);
@@ -412,7 +431,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       }
       await refresh();
     } catch (err) {
-      alert(`Failed to spawn test ports: ${(err as Error)?.message ?? err}`);
+      alert(`${t('ports.testSpawnedFailed')} ${(err as Error)?.message ?? err}`);
     }
   };
 
@@ -421,7 +440,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Filter by port, pid, name, path, state, parent..."
+          placeholder={t('ports.filterPlaceholder')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           style={{ maxWidth: 380 }}
@@ -431,48 +450,48 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
             className={viewMode === 'flat' ? 'primary' : 'ghost'}
             onClick={() => setViewMode('flat')}
           >
-            Flat
+            {t('ports.view.flat')}
           </button>
           <button
             className={viewMode === 'grouped' ? 'primary' : 'ghost'}
             onClick={() => setViewMode('grouped')}
           >
-            Group by EXE
+            {t('ports.view.groupExe')}
           </button>
         </div>
         <button onClick={refresh} disabled={loading}>
-          {loading ? 'Refreshing...' : 'Refresh'}
+          {loading ? t('common.refreshing') : t('common.refresh')}
         </button>
         <button
           className="danger"
           onClick={killSelected}
           disabled={selected.size === 0}
         >
-          Kill Selected ({selected.size})
+          {t('ports.killSelected')} ({selected.size})
         </button>
         {systemInfo?.devToolsEnabled && (
           <button
             className="test"
             onClick={spawnTestPorts}
-            title="Diagnostic helper (Windows): spawns 5 child processes that bind random TCP ports. Use the row Kill button or Kill Group to clean them up — they are NOT auto-cleaned until you quit the app."
+            title={t('ports.spawnTestTitle')}
           >
-            Spawn test ports
+            {t('ports.spawnTest')}
           </button>
         )}
         {(spawnedPids.size > 0 || spawnedPorts.size > 0) && (
           <button
             className="ghost"
             onClick={clearTestMarkers}
-            title="Forget which rows were spawned by the test helper (does NOT kill the processes)."
+            title={t('ports.clearTestMarkersTitle')}
           >
-            Clear test markers ({spawnedPids.size})
+            {t('ports.clearTestMarkers')} ({spawnedPids.size})
           </button>
         )}
         <div className="spacer" />
         <span className="badge">
           {viewMode === 'flat'
-            ? `${filtered.length} entries`
-            : `${groups.length} apps / ${filtered.length} entries`}
+            ? `${filtered.length} ${t('ports.entries')}`
+            : `${groups.length} ${t('ports.appsSlash')} / ${filtered.length} ${t('ports.entries')}`}
         </span>
       </div>
 
@@ -480,24 +499,24 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 
       <div className="content">
         {filtered.length === 0 && !loading ? (
-          <div className="empty">No ports found.</div>
+          <div className="empty">{t('ports.empty')}</div>
         ) : viewMode === 'flat' ? (
           <table className="table">
             <thead>
               <tr>
                 <th style={{ width: 28 }}></th>
-                <th onClick={() => toggleSort('protocol')}>Proto</th>
-                <th onClick={() => toggleSort('localPort')}>Local</th>
-                <th>Remote</th>
-                <th onClick={() => toggleSort('state')}>State</th>
-                <th onClick={() => toggleSort('pid')}>PID</th>
-                <th onClick={() => toggleSort('processName')}>Process</th>
-                <th onClick={() => toggleSort('parentName')} title="Started by">
-                  Started by
+                <th onClick={() => toggleSort('protocol')}>{t('ports.col.proto')}</th>
+                <th onClick={() => toggleSort('localPort')}>{t('ports.col.local')}</th>
+                <th>{t('ports.col.remote')}</th>
+                <th onClick={() => toggleSort('state')}>{t('ports.col.state')}</th>
+                <th onClick={() => toggleSort('pid')}>{t('ports.col.pid')}</th>
+                <th onClick={() => toggleSort('processName')}>{t('ports.col.process')}</th>
+                <th onClick={() => toggleSort('parentName')} title={t('ports.col.startedBy')}>
+                  {t('ports.col.startedBy')}
                 </th>
-                <th onClick={() => toggleSort('processPath')}>Path</th>
-                <th>User</th>
-                <th style={{ width: 140 }}>Actions</th>
+                <th onClick={() => toggleSort('processPath')}>{t('ports.col.path')}</th>
+                <th>{t('ports.col.user')}</th>
+                <th style={{ width: 140 }}>{t('ports.col.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -526,7 +545,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                     <td className="mono">
                       {r.localAddress}:{r.localPort}
                       {isTest && (
-                        <span className="test-tag" title="Spawned by 'Spawn test ports'">
+                        <span className="test-tag" title={t('ports.testTag')}>
                           TEST
                         </span>
                       )}
@@ -568,16 +587,16 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                             r.processPath &&
                             window.closedport.revealInFolder(r.processPath)
                           }
-                          title="Reveal in folder"
+                          title={t('ports.openTitle')}
                         >
-                          Open
+                          {t('common.open')}
                         </button>
                         <button
                           className="danger"
                           disabled={!r.pid}
                           onClick={() => killOne(r.pid)}
                         >
-                          Kill
+                          {t('common.kill')}
                         </button>
                       </div>
                     </td>
@@ -589,7 +608,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
         ) : (
           <div className="group-list">
             <div className="group-sort-bar">
-              <span className="group-sort-label">Sort by:</span>
+              <span className="group-sort-label">{t('ports.sortBy')}</span>
               {(['name', 'ports', 'pids'] as GroupSortKey[]).map((k) => {
                 const active = groupSort.key === k;
                 const arrow = active ? (groupSort.asc ? ' ↑' : ' ↓') : '';
@@ -605,7 +624,11 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                       )
                     }
                   >
-                    {k === 'name' ? 'Name' : k === 'ports' ? 'Ports' : 'PIDs'}
+                    {k === 'name'
+                      ? t('ports.sort.name')
+                      : k === 'ports'
+                        ? t('ports.sort.ports')
+                        : t('ports.sort.pids')}
                     {arrow}
                   </button>
                 );
@@ -633,8 +656,8 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                     <span className="group-name" title={g.path}>
                       {g.name}
                     </span>
-                    <span className="badge">{g.items.length} ports</span>
-                    <span className="badge">{g.pids.size} pids</span>
+                    <span className="badge">{g.items.length} {t('ports.ports')}</span>
+                    <span className="badge">{g.pids.size} {t('ports.pids')}</span>
                     <span className="group-path mono" title={g.path}>
                       {g.path || ''}
                     </span>
@@ -647,7 +670,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                         if (g.path) window.closedport.revealInFolder(g.path);
                       }}
                     >
-                      Open
+                      {t('common.open')}
                     </button>
                     <button
                       className="danger"
@@ -656,19 +679,19 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                         killGroup(Array.from(g.pids));
                       }}
                     >
-                      Kill Group
+                      {t('ports.killGroup')}
                     </button>
                   </div>
                   {isOpen && (
                     <table className="table compact">
                       <thead>
                         <tr>
-                          <th>Proto</th>
-                          <th>Local</th>
-                          <th>State</th>
-                          <th>PID</th>
-                          <th>Started by</th>
-                          <th style={{ width: 100 }}>Action</th>
+                          <th>{t('ports.col.proto')}</th>
+                          <th>{t('ports.col.local')}</th>
+                          <th>{t('ports.col.state')}</th>
+                          <th>{t('ports.col.pid')}</th>
+                          <th>{t('ports.col.startedBy')}</th>
+                          <th style={{ width: 100 }}>{t('ports.col.action')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -687,7 +710,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                                 {isTest && (
                                   <span
                                     className="test-tag"
-                                    title="Spawned by 'Spawn test ports'"
+                                    title={t('ports.testTag')}
                                   >
                                     TEST
                                   </span>
@@ -708,7 +731,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                                   disabled={!r.pid}
                                   onClick={() => killOne(r.pid)}
                                 >
-                                  Kill
+                                  {t('common.kill')}
                                 </button>
                               </td>
                             </tr>
@@ -730,6 +753,7 @@ const PortsView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   systemInfo
 }) => {
+  const t = useT();
   const [folder, setFolder] = useState('');
   const [rows, setRows] = useState<
     Array<{
@@ -825,7 +849,7 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
     if (!file) return;
     const resolved = window.closedport.resolveDroppedPath(file);
     if (!resolved) {
-      setError('Could not resolve the dropped item to a filesystem path.');
+      setError(t('folder.dropResolveFail'));
       return;
     }
     // If the user dropped a file, scan its parent directory; the user's
@@ -851,9 +875,9 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
   };
 
   const killOne = async (pid: number) => {
-    if (!confirm(`Kill PID ${pid}?`)) return;
+    if (!confirm(t('folder.killOneConfirm').replace('{pid}', String(pid)))) return;
     const res = await window.closedport.killProcess(pid, true);
-    if (!res.success) alert(`Failed: ${res.message}`);
+    if (!res.success) alert(`${t('ports.failed')} ${res.message}`);
     await scan();
   };
 
@@ -861,12 +885,12 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
 
   const killAll = async () => {
     if (uniquePids.length === 0) return;
-    if (!confirm(`Kill ${uniquePids.length} process(es)?`)) return;
+    if (!confirm(t('folder.killManyConfirm').replace('{n}', String(uniquePids.length)))) return;
     const results = await window.closedport.killProcesses(uniquePids, true);
     const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       alert(
-        `Failed: ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
+        `${t('ports.failed')} ${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
       );
     }
     await scan();
@@ -887,48 +911,40 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
             type="text"
             placeholder={
               isWin
-                ? 'Pick, paste, or drag a folder onto this panel...'
-                : 'Pick or paste a folder path...'
+                ? t('folder.placeholder.win')
+                : t('folder.placeholder.other')
             }
             value={folder}
             onChange={(e) => setFolder(e.target.value)}
           />
-          <button onClick={pick}>Browse</button>
+          <button onClick={pick}>{t('common.browse')}</button>
         </div>
         <button
           className="primary"
           disabled={!folder || loading || !isWin}
           onClick={() => scan()}
         >
-          {loading ? 'Scanning...' : 'Scan'}
+          {loading ? t('folder.scanning') : t('folder.scan')}
         </button>
         <button
           className="danger"
           disabled={uniquePids.length === 0}
           onClick={killAll}
         >
-          Kill All ({uniquePids.length})
+          {t('folder.killAll')} ({uniquePids.length})
         </button>
       </div>
 
       {!isWin && (
         <div className="banner">
-          Folder lock detection is Windows-only. On macOS / Linux, use the
-          Ports tab; file-handle holding is rarely a blocker outside Windows.
+          {t('folder.notWin')}
         </div>
       )}
 
       {isWin && systemInfo && !systemInfo.handleAvailable && (
         <div className="banner">
-          <strong>Limited mode:</strong> handle.exe (Sysinternals) not
-          detected, so we&apos;re using Windows RestartManager. RM only sees{' '}
-          <em>user-mode exclusive locks</em> (Word/Excel saving, IDE write
-          locks, msbuild output, etc.) — it will <strong>not</strong> show
-          read-only handles, memory-mapped DLLs, directory handles, or a
-          process&apos;s working directory. If you expect a result and get
-          none, drop <code>handle.exe</code> / <code>handle64.exe</code> into
-          the app&apos;s <code>resources/</code> folder (or anywhere on PATH)
-          for full coverage.
+          <strong>{t('folder.limited.intro')}</strong>{' '}
+          {t('folder.limited.body')}
         </div>
       )}
 
@@ -939,43 +955,40 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
           <div className="empty">
             {!folder ? (
               isWin
-                ? 'Pick a folder, paste a path, or drag a folder onto this panel to scan.'
-                : 'Pick a folder to scan.'
+                ? t('folder.emptyPick.win')
+                : t('folder.emptyPick.other')
             ) : lastMeta && !lastMeta.folderExists ? (
               <>
-                <div>Folder does not exist or is not a directory:</div>
+                <div>{t('folder.notExist')}</div>
                 <div className="mono" style={{ marginTop: 6 }}>{folder}</div>
               </>
             ) : lastMeta && lastMeta.backend === 'restart-manager' ? (
               <>
                 <div>
-                  Scanned{' '}
-                  <strong>{lastMeta.scannedFileCount ?? 0}</strong> file(s) via
-                  RestartManager — no user-mode lock found.
+                  {t('folder.rmScanned')}{' '}
+                  <strong>{lastMeta.scannedFileCount ?? 0}</strong>{' '}
+                  {t('folder.rmFiles')}
                 </div>
                 <div style={{ marginTop: 8, opacity: 0.75 }}>
-                  This does <strong>not</strong> mean nothing has the folder
-                  open: RM can&apos;t see read-only handles, mmap&apos;d DLLs,
-                  or processes whose <em>cwd</em> is this folder. Install{' '}
-                  <code>handle.exe</code> for full visibility.
+                  {t('folder.rmCaveat')}
                 </div>
               </>
             ) : lastMeta && lastMeta.backend === 'handle.exe' ? (
-              <>No process is holding any handle inside this folder.</>
+              <>{t('folder.noneHandleExe')}</>
             ) : (
-              'No locking processes found (or scan not run yet).'
+              t('folder.noneGeneric')
             )}
           </div>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>PID</th>
-                <th>Process</th>
-                <th>Path</th>
-                <th>Handle</th>
-                <th>Resource</th>
-                <th style={{ width: 140 }}>Actions</th>
+                <th>{t('folder.col.pid')}</th>
+                <th>{t('folder.col.process')}</th>
+                <th>{t('folder.col.path')}</th>
+                <th>{t('folder.col.handleType')}</th>
+                <th>{t('folder.col.resource')}</th>
+                <th style={{ width: 140 }}>{t('folder.col.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -992,7 +1005,7 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
                   </td>
                   <td>
                     <button className="danger" onClick={() => killOne(r.pid)}>
-                      Kill
+                      {t('common.kill')}
                     </button>
                   </td>
                 </tr>
@@ -1005,9 +1018,9 @@ const FolderView: React.FC<{ systemInfo: SystemInfo | null }> = ({
       {isDragOver && isWin && (
         <div className="drop-overlay" aria-hidden="true">
           <div className="drop-overlay-card">
-            <div className="drop-overlay-title">Drop to scan</div>
+            <div className="drop-overlay-title">{t('folder.dropTitle')}</div>
             <div className="drop-overlay-sub">
-              Folder → scanned directly · File → its parent folder is scanned
+              {t('folder.dropSub')}
             </div>
           </div>
         </div>
@@ -1075,6 +1088,7 @@ interface TreeNode {
  *    an inline red border but never breaks the table.
  */
 const ProcessesView: React.FC = () => {
+  const tr = useT();
   const [rows, setRows] = useState<ProcessEntry[]>([]);
   const [capturedAt, setCapturedAt] = useState<number | null>(null);
   const [backend, setBackend] = useState<string>('');
@@ -1091,6 +1105,16 @@ const ProcessesView: React.FC = () => {
   const [view, setView] = useState<ProcView>('flat');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [memory, setMemory] = useState<SystemMemoryInfo | null>(null);
+
+  const refreshMemory = useCallback(async () => {
+    try {
+      const m = await window.closedport.getSystemMemory();
+      setMemory(m);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1110,7 +1134,8 @@ const ProcessesView: React.FC = () => {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    refreshMemory();
+  }, [refresh, refreshMemory]);
 
   // Auto-refresh. Chained setTimeout (not setInterval) so a slow
   // PowerShell snapshot under load doesn't stack queued ticks.
@@ -1121,6 +1146,7 @@ const ProcessesView: React.FC = () => {
     let t: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       await refresh();
+      await refreshMemory();
       if (cancelled) return;
       t = setTimeout(tick, ms);
     };
@@ -1129,7 +1155,7 @@ const ProcessesView: React.FC = () => {
       cancelled = true;
       if (t) clearTimeout(t);
     };
-  }, [interval, refresh]);
+  }, [interval, refresh, refreshMemory]);
 
   const { regex, regexInvalid } = useMemo(() => {
     const s = regexText.trim();
@@ -1342,9 +1368,9 @@ const ProcessesView: React.FC = () => {
   const clearSelection = () => setSelected(new Set());
 
   const killOne = async (pid: number) => {
-    if (!confirm(`Kill PID ${pid}?`)) return;
+    if (!confirm(tr('proc.killOneConfirm').replace('{pid}', String(pid)))) return;
     const res = await window.closedport.killProcess(pid, true);
-    if (!res.success) alert(`Failed to kill ${pid}: ${res.message}`);
+    if (!res.success) alert(`${tr('ports.failed')} ${pid}: ${res.message}`);
     setSelected((prev) => {
       const next = new Set(prev);
       next.delete(pid);
@@ -1356,13 +1382,13 @@ const ProcessesView: React.FC = () => {
   const killSelected = async () => {
     const pids = Array.from(selected);
     if (pids.length === 0) return;
-    if (!confirm(`Kill ${pids.length} process(es)?\n\nThis cannot be undone.`))
+    if (!confirm(tr('proc.killSelectedConfirm').replace('{n}', String(pids.length))))
       return;
     const results = await window.closedport.killProcesses(pids, true);
     const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       alert(
-        `Failed:\n${failed
+        `${tr('ports.failed')}\n${failed
           .slice(0, 10)
           .map((f) => `${f.pid}: ${f.message}`)
           .join('\n')}${failed.length > 10 ? `\n(+${failed.length - 10} more)` : ''}`
@@ -1374,12 +1400,12 @@ const ProcessesView: React.FC = () => {
 
   const killGroup = async (pids: number[]) => {
     if (pids.length === 0) return;
-    if (!confirm(`Kill all ${pids.length} process(es) in this group?`)) return;
+    if (!confirm(tr('proc.killGroupConfirm').replace('{n}', String(pids.length)))) return;
     const results = await window.closedport.killProcesses(pids, true);
     const failed = results.filter((r) => !r.success);
     if (failed.length > 0) {
       alert(
-        `Failed:\n${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
+        `${tr('ports.failed')}\n${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
       );
     }
     await refresh();
@@ -1387,83 +1413,80 @@ const ProcessesView: React.FC = () => {
 
   return (
     <>
+      <MemoryBar mem={memory} />
       <div className="toolbar">
         <input
           type="search"
-          placeholder="Filter by pid, name, user, path..."
+          placeholder={tr('proc.filterPlaceholder')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           style={{ maxWidth: 280 }}
         />
         <input
           type="text"
-          placeholder="Regex (highlights matches): chrome.*helper, ^node$, vite|webpack..."
+          placeholder={tr('proc.regexPlaceholder')}
           value={regexText}
           onChange={(e) => setRegexText(e.target.value)}
           className={`proc-regex${regexInvalid ? ' invalid' : ''}`}
-          title={
-            regexInvalid
-              ? 'Invalid regex'
-              : 'Matching rows are highlighted. Click "Select matched" to add them to the selection.'
-          }
+          title={regexInvalid ? tr('proc.regexInvalid') : tr('proc.regexTitle')}
           style={{ maxWidth: 300 }}
         />
         <button
           className={matchedPids.size > 0 ? 'primary' : 'ghost'}
           onClick={selectMatched}
           disabled={matchedPids.size === 0}
-          title="Add every regex match to the checkbox selection (does not kill on its own)."
+          title={tr('proc.regexTitle')}
         >
-          Select matched ({matchedPids.size})
+          {tr('proc.selectMatched')} ({matchedPids.size})
         </button>
         <div className="view-switch">
           <button
             className={view === 'flat' ? 'primary' : 'ghost'}
             onClick={() => setView('flat')}
           >
-            Flat
+            {tr('proc.view.flat')}
           </button>
           <button
             className={view === 'grouped' ? 'primary' : 'ghost'}
             onClick={() => setView('grouped')}
           >
-            Group
+            {tr('proc.view.group')}
           </button>
           <button
             className={view === 'tree' ? 'primary' : 'ghost'}
             onClick={() => setView('tree')}
           >
-            Tree
+            {tr('proc.view.tree')}
           </button>
         </div>
         <button onClick={refresh} disabled={loading}>
-          {loading ? 'Refreshing...' : 'Refresh'}
+          {loading ? tr('common.refreshing') : tr('common.refresh')}
         </button>
         <select
           value={interval}
           onChange={(e) => setIntervalKey(e.target.value as RefreshInterval)}
-          title="Auto-refresh interval"
+          title={tr('common.auto')}
         >
-          <option value="off">Auto: Off</option>
-          <option value="5s">Auto: 5s</option>
-          <option value="10s">Auto: 10s</option>
-          <option value="30s">Auto: 30s</option>
+          <option value="off">{tr('proc.autoOff')}</option>
+          <option value="5s">{tr('proc.auto5s')}</option>
+          <option value="10s">{tr('proc.auto10s')}</option>
+          <option value="30s">{tr('proc.auto30s')}</option>
         </select>
         <button
           className={selected.size > 0 ? 'danger' : 'ghost'}
           onClick={killSelected}
           disabled={selected.size === 0}
         >
-          Kill Selected ({selected.size})
+          {tr('proc.killSelected')} ({selected.size})
         </button>
         {selected.size > 0 && (
           <button className="ghost" onClick={clearSelection}>
-            Clear
+            {tr('common.clear')}
           </button>
         )}
         <div className="spacer" />
-        <span className="badge">{filtered.length} processes</span>
-        {backend && <span className="badge" title="Backend">{backend}</span>}
+        <span className="badge">{filtered.length} {tr('proc.entries')}</span>
+        {backend && <span className="badge" title={tr('proc.backend')}>{backend}</span>}
         {capturedAt && (
           <span className="badge" title={new Date(capturedAt).toISOString()}>
             {new Date(capturedAt).toLocaleTimeString()}
@@ -1473,10 +1496,10 @@ const ProcessesView: React.FC = () => {
 
       <div className="toolbar subtle">
         <span className="hint">
-          Memory columns: <strong>RSS</strong> = Resident / Working Set
-          (physical RAM in use) · <strong>Private</strong> = privately
-          committed bytes · <strong>Virtual</strong> = address space
-          reservation. Click any column header to sort.
+          {tr('proc.memHintIntro')} <strong>RSS</strong> — {tr('proc.rssHint')} ·{' '}
+          <strong>Private</strong> — {tr('proc.privateHint')} ·{' '}
+          <strong>Virtual</strong> — {tr('proc.virtualHint')}.{' '}
+          {tr('proc.memHintTail')}
         </span>
       </div>
 
@@ -1493,10 +1516,9 @@ const ProcessesView: React.FC = () => {
           <div className="proc-loading">
             <div className="spinner" aria-hidden="true" />
             <div className="proc-loading-text">
-              <strong>Loading processes…</strong>
+              <strong>{tr('proc.loading.title')}</strong>
               <span className="hint">
-                First snapshot can take a few seconds on Windows
-                (Get-CimInstance walks the full Win32_Process table).
+                {tr('proc.loading.hint')}
               </span>
             </div>
             <table className="table proc-table proc-skeleton" aria-hidden="true">
@@ -1512,7 +1534,7 @@ const ProcessesView: React.FC = () => {
             </table>
           </div>
         ) : filtered.length === 0 && !loading ? (
-          <div className="empty">No processes found.</div>
+          <div className="empty">{tr('proc.empty')}</div>
         ) : view === 'flat' ? (
           <table className="table proc-table">
             <thead>
@@ -1525,39 +1547,39 @@ const ProcessesView: React.FC = () => {
                     title={allChecked ? 'Deselect all visible' : 'Select all visible'}
                   />
                 </th>
-                <th onClick={() => toggleSort('pid')}>PID</th>
-                <th onClick={() => toggleSort('name')}>Name</th>
-                <th onClick={() => toggleSort('user')}>User</th>
+                <th onClick={() => toggleSort('pid')}>{tr('proc.col.pid')}</th>
+                <th onClick={() => toggleSort('name')}>{tr('proc.col.name')}</th>
+                <th onClick={() => toggleSort('user')}>{tr('proc.col.user')}</th>
                 <th
                   onClick={() => toggleSort('cpuPercent')}
                   title="Average CPU% since the process started. >100% means multi-core load."
                 >
-                  CPU%
+                  {tr('proc.col.cpu')}
                 </th>
                 <th
                   onClick={() => toggleSort('rssBytes')}
-                  title="RSS = Resident / Working Set. Physical RAM currently held by the process."
+                  title={tr('proc.rssHint')}
                 >
-                  RSS
+                  {tr('proc.col.rss')}
                 </th>
                 <th
                   onClick={() => toggleSort('privateBytes')}
-                  title="Private bytes. Memory privately committed by this process."
+                  title={tr('proc.privateHint')}
                 >
-                  Private
+                  {tr('proc.col.private')}
                 </th>
                 <th
                   onClick={() => toggleSort('virtualBytes')}
-                  title="Virtual address space size."
+                  title={tr('proc.virtualHint')}
                 >
-                  Virtual
+                  {tr('proc.col.virtual')}
                 </th>
                 <th onClick={() => toggleSort('threadCount')} title="Threads">
-                  Thr
+                  {tr('proc.col.thr')}
                 </th>
-                <th onClick={() => toggleSort('uptimeSeconds')}>Uptime</th>
-                <th>Path</th>
-                <th style={{ width: 70 }}>Action</th>
+                <th onClick={() => toggleSort('uptimeSeconds')}>{tr('proc.col.uptime')}</th>
+                <th>{tr('proc.col.path')}</th>
+                <th style={{ width: 70 }}>{tr('proc.col.action')}</th>
               </tr>
             </thead>
             <tbody>
@@ -1605,7 +1627,7 @@ const ProcessesView: React.FC = () => {
                     </td>
                     <td>
                       <button className="danger" onClick={() => killOne(r.pid)}>
-                        Kill
+                        {tr('common.kill')}
                       </button>
                     </td>
                   </tr>
@@ -1639,11 +1661,11 @@ const ProcessesView: React.FC = () => {
                     />
                     <span className="group-toggle">{isOpen ? '−' : '+'}</span>
                     <span className="group-name">{g.name}</span>
-                    <span className="badge">{g.items.length} procs</span>
-                    <span className="badge" title="Total RSS">
+                    <span className="badge">{g.items.length} {tr('proc.procs')}</span>
+                    <span className="badge" title={tr('proc.totalRss')}>
                       {formatBytes(g.totalRss)} RSS
                     </span>
-                    <span className="badge" title="Sum of CPU%">
+                    <span className="badge" title={tr('proc.sumCpu')}>
                       {g.totalCpu.toFixed(1)}% CPU
                     </span>
                     <div className="spacer" />
@@ -1654,7 +1676,7 @@ const ProcessesView: React.FC = () => {
                         killGroup(groupPids);
                       }}
                     >
-                      Kill Group ({g.items.length})
+                      {tr('proc.killGroup')} ({g.items.length})
                     </button>
                   </div>
                   {isOpen && (
@@ -1662,14 +1684,14 @@ const ProcessesView: React.FC = () => {
                       <thead>
                         <tr>
                           <th style={{ width: 28 }}></th>
-                          <th>PID</th>
-                          <th>User</th>
-                          <th>CPU%</th>
-                          <th>RSS</th>
-                          <th>Private</th>
-                          <th>Uptime</th>
-                          <th>Path</th>
-                          <th style={{ width: 70 }}>Action</th>
+                          <th>{tr('proc.col.pid')}</th>
+                          <th>{tr('proc.col.user')}</th>
+                          <th>{tr('proc.col.cpu')}</th>
+                          <th>{tr('proc.col.rss')}</th>
+                          <th>{tr('proc.col.private')}</th>
+                          <th>{tr('proc.col.uptime')}</th>
+                          <th>{tr('proc.col.path')}</th>
+                          <th style={{ width: 70 }}>{tr('proc.col.action')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1714,7 +1736,7 @@ const ProcessesView: React.FC = () => {
                                     className="danger"
                                     onClick={() => killOne(r.pid)}
                                   >
-                                    Kill
+                                    {tr('common.kill')}
                                   </button>
                                 </td>
                               </tr>
@@ -1732,14 +1754,13 @@ const ProcessesView: React.FC = () => {
           <>
             <div className="toolbar subtle">
               <button className="ghost" onClick={expandAllTree}>
-                Expand all
+                {tr('proc.expandAll')}
               </button>
               <button className="ghost" onClick={collapseAllTree}>
-                Collapse all
+                {tr('proc.collapseAll')}
               </button>
               <span className="hint">
-                Tree built from parent PID. Roots are processes whose
-                parent is not in this snapshot.
+                {tr('proc.treeHint')}
               </span>
             </div>
             <table className="table proc-table">
@@ -1752,15 +1773,15 @@ const ProcessesView: React.FC = () => {
                       onChange={toggleSelectAll}
                     />
                   </th>
-                  <th>Name (PID)</th>
-                  <th>User</th>
-                  <th>CPU%</th>
-                  <th>RSS</th>
-                  <th>Private</th>
-                  <th>Thr</th>
-                  <th>Uptime</th>
-                  <th>Path</th>
-                  <th style={{ width: 70 }}>Action</th>
+                  <th>{tr('proc.col.namePid')}</th>
+                  <th>{tr('proc.col.user')}</th>
+                  <th>{tr('proc.col.cpu')}</th>
+                  <th>{tr('proc.col.rss')}</th>
+                  <th>{tr('proc.col.private')}</th>
+                  <th>{tr('proc.col.thr')}</th>
+                  <th>{tr('proc.col.uptime')}</th>
+                  <th>{tr('proc.col.path')}</th>
+                  <th style={{ width: 70 }}>{tr('proc.col.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1827,7 +1848,7 @@ const ProcessesView: React.FC = () => {
                           className="danger"
                           onClick={() => killOne(r.pid)}
                         >
-                          Kill
+                          {tr('common.kill')}
                         </button>
                       </td>
                     </tr>
@@ -1869,5 +1890,125 @@ function truncatePath(p: string): string {
   if (p.length <= 48) return p;
   return `…${p.slice(p.length - 47)}`;
 }
+
+function formatMemSize(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '—';
+  const gb = n / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = n / (1024 * 1024);
+  return `${mb.toFixed(0)} MB`;
+}
+
+const MemoryBar: React.FC<{ mem: SystemMemoryInfo | null }> = ({ mem }) => {
+  const tr = useT();
+  if (!mem) {
+    return (
+      <div className="mem-bar-wrap">
+        <div className="mem-bar mem-bar-loading" aria-busy="true">
+          <span className="hint">{tr('mem.loading')}</span>
+        </div>
+      </div>
+    );
+  }
+  const total = Math.max(mem.totalBytes, 1);
+  const used = Math.max(mem.usedBytes, 0);
+  const compressed = Math.max(mem.compressedBytes, 0);
+  const cached = Math.max(mem.cachedBytes, 0);
+  const usedCore = Math.max(used - compressed, 0);
+  const free = Math.max(total - usedCore - compressed - cached, 0);
+  const pct = (n: number) => `${(n / total) * 100}%`;
+  const usedPercent = Math.round((used / total) * 100);
+  const swapTotal = Math.max(mem.swapTotalBytes, 0);
+  const swapUsed = Math.max(mem.swapUsedBytes, 0);
+  const swapPct =
+    swapTotal > 0 ? `${(swapUsed / swapTotal) * 100}%` : '0%';
+  return (
+    <div className="mem-bar-wrap">
+      <div className="mem-bar">
+        {usedCore > 0 && (
+          <div
+            className="mem-seg used"
+            style={{ width: pct(usedCore) }}
+            title={`${tr('mem.used')}: ${formatMemSize(usedCore)}`}
+          />
+        )}
+        {compressed > 0 && (
+          <div
+            className="mem-seg compressed"
+            style={{ width: pct(compressed) }}
+            title={`${tr('mem.compressed')}: ${formatMemSize(compressed)}`}
+          />
+        )}
+        {cached > 0 && (
+          <div
+            className="mem-seg cached"
+            style={{ width: pct(cached) }}
+            title={`${tr('mem.cached')}: ${formatMemSize(cached)}`}
+          />
+        )}
+        {free > 0 && (
+          <div
+            className="mem-seg free"
+            style={{ width: pct(free) }}
+            title={`${tr('mem.free')}: ${formatMemSize(free)}`}
+          />
+        )}
+      </div>
+      {swapTotal > 0 && (
+        <div className="mem-swap-row">
+          <span className="mem-swap-label">{tr('mem.swap')}</span>
+          <div className="mem-bar swap">
+            <div
+              className="mem-seg swap-used"
+              style={{ width: swapPct }}
+              title={`${tr('mem.swap')}: ${formatMemSize(swapUsed)} / ${formatMemSize(swapTotal)}`}
+            />
+          </div>
+        </div>
+      )}
+      <div className="mem-stats">
+        <span>
+          {tr('mem.total')}: {formatMemSize(mem.totalBytes)}
+        </span>
+        <span className="sep">·</span>
+        <span>
+          {tr('mem.used')}: {formatMemSize(used)} ({usedPercent}%)
+        </span>
+        <span className="sep">·</span>
+        <span>
+          {tr('mem.available')}: {formatMemSize(mem.availableBytes)}
+        </span>
+        {compressed > 0 && (
+          <>
+            <span className="sep">·</span>
+            <span>
+              {tr('mem.compressed')}: {formatMemSize(compressed)}
+            </span>
+          </>
+        )}
+        <span className="sep">·</span>
+        <span>
+          {tr('mem.cached')}: {formatMemSize(cached)}
+        </span>
+        {swapTotal > 0 && (
+          <>
+            <span className="sep">·</span>
+            <span>
+              {tr('mem.swap')}: {formatMemSize(swapUsed)} / {formatMemSize(swapTotal)}
+            </span>
+          </>
+        )}
+        {mem.warning && (
+          <>
+            <span className="sep">·</span>
+            <span className="mem-warning" title={mem.warning}>
+              !
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default App;

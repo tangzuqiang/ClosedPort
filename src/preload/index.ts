@@ -21,6 +21,7 @@ const api: ApiSurface = {
   killProcesses: (pids: number[], force?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.KILL_PROCESSES, pids, force),
   getSystemInfo: () => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_INFO),
+  getSystemMemory: () => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_MEMORY),
   toggleFloating: () => ipcRenderer.invoke(IPC_CHANNELS.TOGGLE_FLOATING),
   pickFolder: () => ipcRenderer.invoke(IPC_CHANNELS.PICK_FOLDER),
   revealInFolder: (filePath: string) =>

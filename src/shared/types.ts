@@ -55,6 +55,20 @@ export interface SystemInfo {
   devToolsEnabled: boolean;
 }
 
+export interface SystemMemoryInfo {
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  availableBytes: number;
+  cachedBytes: number;
+  compressedBytes: number;
+  swapTotalBytes: number;
+  swapUsedBytes: number;
+  capturedAt: number;
+  backend: 'win32' | 'darwin' | 'linux' | 'unsupported';
+  warning?: string;
+}
+
 export interface SpawnedTestPort {
   pid: number;
   port: number;
@@ -141,6 +155,7 @@ export interface ApiSurface {
   killProcess(pid: number, force?: boolean): Promise<KillResult>;
   killProcesses(pids: number[], force?: boolean): Promise<KillResult[]>;
   getSystemInfo(): Promise<SystemInfo>;
+  getSystemMemory(): Promise<SystemMemoryInfo>;
   toggleFloating(): Promise<boolean>;
   pickFolder(): Promise<string | null>;
   revealInFolder(filePath: string): Promise<void>;

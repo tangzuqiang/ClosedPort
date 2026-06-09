@@ -13,6 +13,7 @@ import fs from 'fs';
 import os from 'os';
 import { listPorts } from './portScanner';
 import { listProcesses } from './processList';
+import { listSystemMemory } from './systemMemory';
 import { scanFolder, scanFolderEx, isHandleExeAvailable } from './folderScanner';
 import { killProcess, killProcesses } from './killer';
 import { spawnFakePortHolders, killAllFakePortHolders } from './devTools';
@@ -298,6 +299,7 @@ function registerIpc(): void {
       devToolsEnabled
     };
   });
+  ipcMain.handle(IPC_CHANNELS.SYSTEM_MEMORY, async () => listSystemMemory());
   ipcMain.handle(IPC_CHANNELS.TOGGLE_FLOATING, async () => toggleFloating());
   ipcMain.handle(IPC_CHANNELS.PICK_FOLDER, async () => {
     const res = await dialog.showOpenDialog({
