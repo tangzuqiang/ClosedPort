@@ -51,8 +51,19 @@ export async function listProcesses(): Promise<ProcessListResult> {
  *     without crashing the whole pipeline
  */
 async function listProcessesWindows(): Promise<ProcessListResult> {
+  // We need two pieces of info from two different sources:
+  //   - Get-Process (.NET): cheap memory / cpu / threads / start time
+  //   - Get-CimInstance Win32_Process: parent pid + executable path +
+  //     command line + owner user. CIM is slower per-row but a single
+  //     call still returns everything in one shot.
+  //
+  // Joining them inside PowerShell avoids shipping two separate JSON
+  // blobs back to Node and re-merging them there. We index the CIM
+  // dictionary by ProcessId for O(1) lookups.
   const script = [
     `$ErrorActionPreference='SilentlyContinue';`,
+    `$cim = @{};`,
+    `Get-CimInstance Win32_Process | ForEach-Object { $cim[[int]$_.ProcessId] = $_ };`,
     `Get-Process |`,
     `Select-Object @{n='Pid';e={$_.Id}},`,
     `              @{n='Name';e={$_.ProcessName}},`,
@@ -61,13 +72,15 @@ async function listProcessesWindows(): Promise<ProcessListResult> {
     `              @{n='Virtual';e={[int64]$_.VirtualMemorySize64}},`,
     `              @{n='Cpu';e={if($_.CPU){[double]$_.CPU}else{0}}},`,
     `              @{n='Threads';e={$_.Threads.Count}},`,
-    `              @{n='Path';e={$_.Path}},`,
-    `              @{n='Started';e={if($_.StartTime){[int64](([DateTimeOffset]$_.StartTime).ToUnixTimeSeconds())}else{-1}}} |`,
+    `              @{n='Path';e={if($_.Path){$_.Path}elseif($cim[$_.Id]){$cim[$_.Id].ExecutablePath}else{$null}}},`,
+    `              @{n='Started';e={if($_.StartTime){[int64](([DateTimeOffset]$_.StartTime).ToUnixTimeSeconds())}else{-1}}},`,
+    `              @{n='Ppid';e={if($cim[$_.Id]){[int]$cim[$_.Id].ParentProcessId}else{-1}}},`,
+    `              @{n='Cmd';e={if($cim[$_.Id]){$cim[$_.Id].CommandLine}else{$null}}} |`,
     `ConvertTo-Json -Compress -Depth 2`
   ].join(' ');
   const res = await execCommand(
     `powershell -NoLogo -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"')}"`,
-    { timeoutMs: 15000, maxBuffer: 1024 * 1024 * 64 }
+    { timeoutMs: 20000, maxBuffer: 1024 * 1024 * 64 }
   );
   if (res.code !== 0 || !res.stdout.trim()) {
     return {
@@ -97,10 +110,13 @@ async function listProcessesWindows(): Promise<ProcessListResult> {
     if (!Number.isFinite(pid) || pid <= 0) continue;
     const started = Number(row.Started);
     const uptime = started > 0 ? Math.max(0, nowSec - started) : -1;
+    const ppidRaw = Number(row.Ppid);
     entries.push({
       pid,
+      parentPid: Number.isFinite(ppidRaw) && ppidRaw > 0 ? ppidRaw : undefined,
       name: stringOrEmpty(row.Name) || `pid ${pid}`,
       path: stringOrUndef(row.Path),
+      commandLine: stringOrUndef(row.Cmd),
       rssBytes: numOr0(row.Ws),
       // PrivateMemorySize64 is the closest analog to "memory this process
       // privately owns" that Windows exposes cheaply.

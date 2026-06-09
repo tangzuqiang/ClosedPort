@@ -167,6 +167,18 @@ input[type='text']:focus, input[type='search']:focus {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-soft);
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.toolbar > button,
+.toolbar > select,
+.toolbar > .view-switch button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.toolbar > .spacer {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .content {
@@ -575,4 +587,148 @@ tr.proc-match td:first-child {
 }
 .proc-panel-body tr.selected {
   background: rgba(79, 140, 255, 0.12);
+}
+
+.toolbar.subtle {
+  padding: 4px 12px;
+  background: transparent;
+  border-bottom: 1px dashed var(--border);
+  gap: 12px;
+  font-size: 12px;
+}
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.hint code {
+  background: rgba(127, 127, 127, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.proc-table th,
+.proc-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.proc-table th input[type='checkbox'],
+.proc-table td input[type='checkbox'] {
+  cursor: pointer;
+}
+.proc-table tr.selected {
+  background: rgba(79, 140, 255, 0.10);
+}
+.proc-table tr.selected:hover {
+  background: rgba(79, 140, 255, 0.16);
+}
+.proc-table tr.proc-match.selected {
+  background: rgba(79, 140, 255, 0.18);
+}
+
+.tree-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 3px;
+  margin-right: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tree-toggle:hover {
+  background: rgba(127, 127, 127, 0.12);
+}
+.tree-toggle.leaf {
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+  color: var(--muted);
+}
+.tree-pid {
+  color: var(--muted);
+  margin-left: 6px;
+  font-size: 11px;
+}
+
+.proc-progress {
+  height: 2px;
+  width: 100%;
+  background: rgba(79, 140, 255, 0.08);
+  overflow: hidden;
+  position: relative;
+}
+.proc-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent, #4f8cff),
+    transparent
+  );
+  animation: proc-progress-slide 1.1s ease-in-out infinite;
+}
+@keyframes proc-progress-slide {
+  0%   { left: -30%; }
+  100% { left: 100%; }
+}
+
+.proc-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 16px 16px;
+}
+.proc-loading-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(127, 127, 127, 0.25);
+  border-top-color: var(--accent, #4f8cff);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.proc-skeleton {
+  width: 100%;
+  margin-top: 16px;
+  opacity: 0.55;
+}
+.proc-skeleton td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.skeleton-row {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    rgba(127, 127, 127, 0.10) 0%,
+    rgba(127, 127, 127, 0.22) 50%,
+    rgba(127, 127, 127, 0.10) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }

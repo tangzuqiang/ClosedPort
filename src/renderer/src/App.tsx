@@ -1037,26 +1037,42 @@ const REFRESH_MS: Record<RefreshInterval, number> = {
   '30s': 30000
 };
 
+type ProcView = 'flat' | 'grouped' | 'tree';
+
+interface ProcGroup {
+  name: string;
+  items: ProcessEntry[];
+  totalRss: number;
+  totalCpu: number;
+}
+
+interface TreeNode {
+  entry: ProcessEntry;
+  children: TreeNode[];
+  depth: number;
+}
+
 /**
- * Processes tab. Three independent surface areas, all wired off one
- * pure-function `listProcesses()` call returned from the main process:
+ * Processes tab. Three view modes share one data fetch and one selection
+ * set, so the user can flip between Flat / Grouped / Tree without losing
+ * what they've checked.
  *
- *   1. A sortable, filterable table.
- *   2. A regex match field that highlights matching rows live but does
- *      not commit a kill until the user explicitly opts in.
- *   3. A "Selection panel" that opens when the user clicks the floating
- *      "Use as selection" action. Inside the panel every matched row is
- *      pre-checked; the user can uncheck false positives and then hit
- *      "Kill Selected" for one confirm + one IPC.
+ *  - Flat:    sortable table, one row per process. Per-row checkbox.
+ *  - Grouped: collapses processes that share a name (e.g. all 18
+ *             "chrome.exe" worker processes), shows aggregate RSS + CPU.
+ *             Group header has a checkbox that selects every child.
+ *  - Tree:    parent-child tree built from ppid. Orphans (parent not in
+ *             the snapshot, e.g. Windows session manager) are pinned to
+ *             the top as roots.
  *
- * Design notes:
- *  - The regex is evaluated in the renderer (never sent to main). We
- *    swallow parse errors and show an inline "invalid regex" hint so the
- *    user can keep typing without the table going blank.
- *  - PIDs 0 (System Idle) / 4 (Windows kernel) and the current Electron
- *    pid are filtered out of kill candidates server-side by killer.ts,
- *    but we also dim them in the panel and pre-uncheck them so the count
- *    is honest.
+ * Kill flow:
+ *  - Per-row Kill button: always available, asks once.
+ *  - Top "Kill Selected (N)": works off the checkbox selection in the
+ *    current view. No regex required.
+ *  - Regex field: only adds visual highlighting + a convenience "Select
+ *    matched" button that *adds* matched rows to the selection. The
+ *    selection then drives Kill Selected like normal. Bad regex shows
+ *    an inline red border but never breaks the table.
  */
 const ProcessesView: React.FC = () => {
   const [rows, setRows] = useState<ProcessEntry[]>([]);
@@ -1072,8 +1088,9 @@ const ProcessesView: React.FC = () => {
     asc: false
   });
   const [interval, setIntervalKey] = useState<RefreshInterval>('off');
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [panelChecked, setPanelChecked] = useState<Set<number>>(new Set());
+  const [view, setView] = useState<ProcView>('flat');
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1095,10 +1112,8 @@ const ProcessesView: React.FC = () => {
     refresh();
   }, [refresh]);
 
-  // Auto-refresh when the user picks an interval. We deliberately use a
-  // chained setTimeout instead of setInterval so a slow listProcesses()
-  // call (Windows can spike to ~800ms under load) doesn't stack queued
-  // refreshes.
+  // Auto-refresh. Chained setTimeout (not setInterval) so a slow
+  // PowerShell snapshot under load doesn't stack queued ticks.
   useEffect(() => {
     const ms = REFRESH_MS[interval];
     if (ms === 0) return;
@@ -1116,8 +1131,6 @@ const ProcessesView: React.FC = () => {
     };
   }, [interval, refresh]);
 
-  // Compile the regex once per keystroke. Empty input means "no
-  // highlight". Invalid input is flagged but doesn't blow up the view.
   const { regex, regexInvalid } = useMemo(() => {
     const s = regexText.trim();
     if (!s) return { regex: null as RegExp | null, regexInvalid: false };
@@ -1128,6 +1141,7 @@ const ProcessesView: React.FC = () => {
     }
   }, [regexText]);
 
+  // Text filter then sort. Filter runs against pid / name / user / path.
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     let list = rows;
@@ -1161,18 +1175,96 @@ const ProcessesView: React.FC = () => {
     if (!regex) return new Set<number>();
     const out = new Set<number>();
     for (const r of filtered) {
-      // Match against name + path + command line, since users routinely
-      // hunt for things like "node.*vite" that span name + args.
       const hay = `${r.name} ${r.path || ''} ${r.commandLine || ''}`;
       if (regex.test(hay)) out.add(r.pid);
     }
     return out;
   }, [filtered, regex]);
 
+  // Group by process name. Within each group we keep the same sort order
+  // the user picked. Group order itself is by total RSS descending --
+  // that's what users want when hunting memory hogs by app.
+  const grouped = useMemo<ProcGroup[]>(() => {
+    const map = new Map<string, ProcGroup>();
+    for (const r of filtered) {
+      const key = r.name || 'unknown';
+      let g = map.get(key);
+      if (!g) {
+        g = { name: key, items: [], totalRss: 0, totalCpu: 0 };
+        map.set(key, g);
+      }
+      g.items.push(r);
+      g.totalRss += r.rssBytes;
+      g.totalCpu += r.cpuPercent;
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalRss - a.totalRss);
+  }, [filtered]);
+
+  // Tree: roots are processes whose parentPid is missing or points to a
+  // pid that is NOT in the current snapshot. Then we depth-first walk
+  // children. Cycles can't exist in a real OS process table, but we still
+  // guard by tracking visited pids -- a stale ppid could in theory let
+  // two pids loop on each other.
+  const tree = useMemo<TreeNode[]>(() => {
+    const byPid = new Map<number, ProcessEntry>();
+    for (const r of rows) byPid.set(r.pid, r);
+    const childrenOf = new Map<number, ProcessEntry[]>();
+    for (const r of rows) {
+      const ppid = r.parentPid;
+      if (ppid && byPid.has(ppid) && ppid !== r.pid) {
+        const arr = childrenOf.get(ppid) || [];
+        arr.push(r);
+        childrenOf.set(ppid, arr);
+      }
+    }
+    const rootEntries = rows.filter(
+      (r) => !r.parentPid || !byPid.has(r.parentPid) || r.parentPid === r.pid
+    );
+    // Apply the text filter to the tree by keeping any node that matches
+    // OR whose subtree contains a match. This way searching for "node"
+    // still shows you the cmd.exe -> node.exe -> child chain.
+    const q = filter.trim().toLowerCase();
+    const matches = (r: ProcessEntry): boolean => {
+      if (!q) return true;
+      return (
+        String(r.pid).includes(q) ||
+        r.name.toLowerCase().includes(q) ||
+        (r.user || '').toLowerCase().includes(q) ||
+        (r.path || '').toLowerCase().includes(q)
+      );
+    };
+    const visited = new Set<number>();
+    const build = (e: ProcessEntry, depth: number): TreeNode | null => {
+      if (visited.has(e.pid)) return null;
+      visited.add(e.pid);
+      const kids = (childrenOf.get(e.pid) || [])
+        .map((c) => build(c, depth + 1))
+        .filter((n): n is TreeNode => n !== null);
+      const selfMatch = matches(e);
+      if (!selfMatch && kids.length === 0) return null;
+      return { entry: e, children: kids, depth };
+    };
+    const nodes = rootEntries
+      .sort((a, b) => b.rssBytes - a.rssBytes)
+      .map((r) => build(r, 0))
+      .filter((n): n is TreeNode => n !== null);
+    return nodes;
+  }, [rows, filter]);
+
+  const flattenTree = useCallback((nodes: TreeNode[]): TreeNode[] => {
+    const out: TreeNode[] = [];
+    const walk = (n: TreeNode) => {
+      out.push(n);
+      if (expanded.has(`tree-${n.entry.pid}`) || expanded.has('tree-all')) {
+        for (const c of n.children) walk(c);
+      }
+    };
+    nodes.forEach(walk);
+    return out;
+  }, [expanded]);
+
   const toggleSort = (key: ProcSortKey) => {
     setSort((prev) =>
-      // Numeric columns default to descending (largest-first) on first
-      // click — that's what the user wants 99% of the time.
       prev.key === key
         ? { key, asc: !prev.asc }
         : {
@@ -1189,16 +1281,8 @@ const ProcessesView: React.FC = () => {
     );
   };
 
-  const openPanel = () => {
-    if (matchedPids.size === 0) return;
-    // Pre-check everything that matched the regex. The user uses the
-    // panel to remove false positives, not to add things.
-    setPanelChecked(new Set(matchedPids));
-    setPanelOpen(true);
-  };
-
-  const togglePanelPid = (pid: number) => {
-    setPanelChecked((prev) => {
+  const toggleSelect = (pid: number) => {
+    setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(pid)) next.delete(pid);
       else next.add(pid);
@@ -1206,15 +1290,71 @@ const ProcessesView: React.FC = () => {
     });
   };
 
+  const togglePids = (pids: number[], wantSelect: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const p of pids) {
+        if (wantSelect) next.add(p);
+        else next.delete(p);
+      }
+      return next;
+    });
+  };
+
+  const toggleExpand = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const expandAllTree = () => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.add('tree-all');
+      return next;
+    });
+  };
+  const collapseAllTree = () => {
+    setExpanded(new Set());
+  };
+
+  const allVisiblePids = useMemo<number[]>(() => {
+    if (view === 'tree') return flattenTree(tree).map((n) => n.entry.pid);
+    return filtered.map((r) => r.pid);
+  }, [view, tree, flattenTree, filtered]);
+
+  const allChecked =
+    allVisiblePids.length > 0 &&
+    allVisiblePids.every((p) => selected.has(p));
+
+  const toggleSelectAll = () => {
+    togglePids(allVisiblePids, !allChecked);
+  };
+
+  const selectMatched = () => {
+    if (matchedPids.size === 0) return;
+    togglePids(Array.from(matchedPids), true);
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
   const killOne = async (pid: number) => {
     if (!confirm(`Kill PID ${pid}?`)) return;
     const res = await window.closedport.killProcess(pid, true);
     if (!res.success) alert(`Failed to kill ${pid}: ${res.message}`);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(pid);
+      return next;
+    });
     await refresh();
   };
 
-  const killChecked = async () => {
-    const pids = Array.from(panelChecked);
+  const killSelected = async () => {
+    const pids = Array.from(selected);
     if (pids.length === 0) return;
     if (!confirm(`Kill ${pids.length} process(es)?\n\nThis cannot be undone.`))
       return;
@@ -1228,18 +1368,22 @@ const ProcessesView: React.FC = () => {
           .join('\n')}${failed.length > 10 ? `\n(+${failed.length - 10} more)` : ''}`
       );
     }
-    setPanelOpen(false);
-    setPanelChecked(new Set());
+    clearSelection();
     await refresh();
   };
 
-  // Pre-resolved arrays for the panel — same order as the visible
-  // (filtered) table so the user's mental model is preserved when they
-  // look from one to the other.
-  const panelRows = useMemo(
-    () => filtered.filter((r) => matchedPids.has(r.pid)),
-    [filtered, matchedPids]
-  );
+  const killGroup = async (pids: number[]) => {
+    if (pids.length === 0) return;
+    if (!confirm(`Kill all ${pids.length} process(es) in this group?`)) return;
+    const results = await window.closedport.killProcesses(pids, true);
+    const failed = results.filter((r) => !r.success);
+    if (failed.length > 0) {
+      alert(
+        `Failed:\n${failed.map((f) => `${f.pid}: ${f.message}`).join('\n')}`
+      );
+    }
+    await refresh();
+  };
 
   return (
     <>
@@ -1249,21 +1393,49 @@ const ProcessesView: React.FC = () => {
           placeholder="Filter by pid, name, user, path..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          style={{ maxWidth: 320 }}
+          style={{ maxWidth: 280 }}
         />
         <input
           type="text"
-          placeholder="Regex: chrome.*helper, ^node$, vite|webpack..."
+          placeholder="Regex (highlights matches): chrome.*helper, ^node$, vite|webpack..."
           value={regexText}
           onChange={(e) => setRegexText(e.target.value)}
           className={`proc-regex${regexInvalid ? ' invalid' : ''}`}
           title={
             regexInvalid
               ? 'Invalid regex'
-              : 'Matching rows are highlighted. Click "Use as selection" to open the kill panel.'
+              : 'Matching rows are highlighted. Click "Select matched" to add them to the selection.'
           }
-          style={{ maxWidth: 320 }}
+          style={{ maxWidth: 300 }}
         />
+        <button
+          className={matchedPids.size > 0 ? 'primary' : 'ghost'}
+          onClick={selectMatched}
+          disabled={matchedPids.size === 0}
+          title="Add every regex match to the checkbox selection (does not kill on its own)."
+        >
+          Select matched ({matchedPids.size})
+        </button>
+        <div className="view-switch">
+          <button
+            className={view === 'flat' ? 'primary' : 'ghost'}
+            onClick={() => setView('flat')}
+          >
+            Flat
+          </button>
+          <button
+            className={view === 'grouped' ? 'primary' : 'ghost'}
+            onClick={() => setView('grouped')}
+          >
+            Group
+          </button>
+          <button
+            className={view === 'tree' ? 'primary' : 'ghost'}
+            onClick={() => setView('tree')}
+          >
+            Tree
+          </button>
+        </div>
         <button onClick={refresh} disabled={loading}>
           {loading ? 'Refreshing...' : 'Refresh'}
         </button>
@@ -1278,13 +1450,17 @@ const ProcessesView: React.FC = () => {
           <option value="30s">Auto: 30s</option>
         </select>
         <button
-          className="danger"
-          onClick={openPanel}
-          disabled={matchedPids.size === 0}
-          title="Open a kill panel with every matched row pre-checked. You can uncheck false positives before confirming."
+          className={selected.size > 0 ? 'danger' : 'ghost'}
+          onClick={killSelected}
+          disabled={selected.size === 0}
         >
-          Use as selection ({matchedPids.size})
+          Kill Selected ({selected.size})
         </button>
+        {selected.size > 0 && (
+          <button className="ghost" onClick={clearSelection}>
+            Clear
+          </button>
+        )}
         <div className="spacer" />
         <span className="badge">{filtered.length} processes</span>
         {backend && <span className="badge" title="Backend">{backend}</span>}
@@ -1295,62 +1471,114 @@ const ProcessesView: React.FC = () => {
         )}
       </div>
 
+      <div className="toolbar subtle">
+        <span className="hint">
+          Memory columns: <strong>RSS</strong> = Resident / Working Set
+          (physical RAM in use) · <strong>Private</strong> = privately
+          committed bytes · <strong>Virtual</strong> = address space
+          reservation. Click any column header to sort.
+        </span>
+      </div>
+
+      {loading && rows.length > 0 && (
+        <div className="proc-progress" role="progressbar" aria-label="Refreshing processes">
+          <div className="proc-progress-bar" />
+        </div>
+      )}
       {warning && <div className="banner">{warning}</div>}
       {error && <div className="banner">{error}</div>}
 
       <div className="content">
-        {filtered.length === 0 && !loading ? (
+        {loading && rows.length === 0 ? (
+          <div className="proc-loading">
+            <div className="spinner" aria-hidden="true" />
+            <div className="proc-loading-text">
+              <strong>Loading processes…</strong>
+              <span className="hint">
+                First snapshot can take a few seconds on Windows
+                (Get-CimInstance walks the full Win32_Process table).
+              </span>
+            </div>
+            <table className="table proc-table proc-skeleton" aria-hidden="true">
+              <tbody>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i}>
+                    <td colSpan={12}>
+                      <div className="skeleton-row" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : filtered.length === 0 && !loading ? (
           <div className="empty">No processes found.</div>
-        ) : (
-          <table className="table">
+        ) : view === 'flat' ? (
+          <table className="table proc-table">
             <thead>
               <tr>
+                <th style={{ width: 28 }}>
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={toggleSelectAll}
+                    title={allChecked ? 'Deselect all visible' : 'Select all visible'}
+                  />
+                </th>
                 <th onClick={() => toggleSort('pid')}>PID</th>
                 <th onClick={() => toggleSort('name')}>Name</th>
                 <th onClick={() => toggleSort('user')}>User</th>
                 <th
                   onClick={() => toggleSort('cpuPercent')}
-                  title="Average CPU% since the process started (single-core scale; >100% means multi-core load)."
+                  title="Average CPU% since the process started. >100% means multi-core load."
                 >
                   CPU%
                 </th>
                 <th
                   onClick={() => toggleSort('rssBytes')}
-                  title="Resident / Working Set. Physical RAM the process is currently using."
+                  title="RSS = Resident / Working Set. Physical RAM currently held by the process."
                 >
                   RSS
                 </th>
                 <th
                   onClick={() => toggleSort('privateBytes')}
-                  title="Private bytes. Memory privately committed by this process (Win) or RSS (Unix)."
+                  title="Private bytes. Memory privately committed by this process."
                 >
                   Private
                 </th>
                 <th
                   onClick={() => toggleSort('virtualBytes')}
-                  title="Virtual address space size. Usually much larger than RSS."
+                  title="Virtual address space size."
                 >
                   Virtual
                 </th>
-                <th
-                  onClick={() => toggleSort('threadCount')}
-                  title="Number of threads."
-                >
+                <th onClick={() => toggleSort('threadCount')} title="Threads">
                   Thr
                 </th>
                 <th onClick={() => toggleSort('uptimeSeconds')}>Uptime</th>
-                <th style={{ width: 100 }}>Path</th>
-                <th style={{ width: 80 }}>Action</th>
+                <th>Path</th>
+                <th style={{ width: 70 }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => {
                 const isMatch = matchedPids.has(r.pid);
+                const isSel = selected.has(r.pid);
+                const cls = [
+                  isMatch ? 'proc-match' : '',
+                  isSel ? 'selected' : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ');
                 return (
-                  <tr
-                    key={r.pid}
-                    className={isMatch ? 'proc-match' : undefined}
-                  >
+                  <tr key={r.pid} className={cls || undefined}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={isSel}
+                        onChange={() => toggleSelect(r.pid)}
+                      />
+                    </td>
                     <td className="mono">{r.pid}</td>
                     <td title={r.commandLine || r.name}>{r.name}</td>
                     <td>{r.user || '—'}</td>
@@ -1368,7 +1596,9 @@ const ProcessesView: React.FC = () => {
                       {r.threadCount >= 0 ? r.threadCount : '—'}
                     </td>
                     <td className="mono">
-                      {r.uptimeSeconds >= 0 ? formatDuration(r.uptimeSeconds) : '—'}
+                      {r.uptimeSeconds >= 0
+                        ? formatDuration(r.uptimeSeconds)
+                        : '—'}
                     </td>
                     <td className="mono" title={r.path}>
                       {r.path ? truncatePath(r.path) : '—'}
@@ -1383,98 +1613,231 @@ const ProcessesView: React.FC = () => {
               })}
             </tbody>
           </table>
-        )}
-      </div>
-
-      {panelOpen && (
-        <div className="proc-panel-backdrop" onClick={() => setPanelOpen(false)}>
-          <div
-            className="proc-panel"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="proc-panel-header">
-              <div className="proc-panel-title">
-                Confirm kill — {panelChecked.size} of {panelRows.length} selected
-              </div>
-              <button
-                className="ghost"
-                onClick={() => setPanelOpen(false)}
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="proc-panel-toolbar">
-              <span className="badge">Regex: {regexText}</span>
-              <button
-                className="ghost"
-                onClick={() =>
-                  setPanelChecked(new Set(panelRows.map((r) => r.pid)))
-                }
-              >
-                Check all
-              </button>
-              <button
-                className="ghost"
-                onClick={() => setPanelChecked(new Set())}
-              >
-                Uncheck all
-              </button>
-              <div className="spacer" />
-              <button
-                className="danger"
-                disabled={panelChecked.size === 0}
-                onClick={killChecked}
-              >
-                Kill Selected ({panelChecked.size})
-              </button>
-            </div>
-            <div className="proc-panel-body">
-              <table className="table compact">
-                <thead>
-                  <tr>
-                    <th style={{ width: 28 }}></th>
-                    <th>PID</th>
-                    <th>Name</th>
-                    <th>User</th>
-                    <th>CPU%</th>
-                    <th>RSS</th>
-                    <th>Path</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {panelRows.map((r) => (
-                    <tr
-                      key={r.pid}
-                      className={
-                        panelChecked.has(r.pid) ? 'selected' : undefined
-                      }
+        ) : view === 'grouped' ? (
+          <div className="group-list">
+            {grouped.map((g) => {
+              const key = `group-${g.name}`;
+              const isOpen = expanded.has(key);
+              const groupPids = g.items.map((i) => i.pid);
+              const groupAllSel = groupPids.every((p) => selected.has(p));
+              const groupSomeSel =
+                !groupAllSel && groupPids.some((p) => selected.has(p));
+              return (
+                <div className="group" key={key}>
+                  <div
+                    className="group-header"
+                    onClick={() => toggleExpand(key)}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={groupAllSel}
+                      ref={(el) => {
+                        if (el) el.indeterminate = groupSomeSel;
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => togglePids(groupPids, !groupAllSel)}
+                    />
+                    <span className="group-toggle">{isOpen ? '−' : '+'}</span>
+                    <span className="group-name">{g.name}</span>
+                    <span className="badge">{g.items.length} procs</span>
+                    <span className="badge" title="Total RSS">
+                      {formatBytes(g.totalRss)} RSS
+                    </span>
+                    <span className="badge" title="Sum of CPU%">
+                      {g.totalCpu.toFixed(1)}% CPU
+                    </span>
+                    <div className="spacer" />
+                    <button
+                      className="danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        killGroup(groupPids);
+                      }}
                     >
+                      Kill Group ({g.items.length})
+                    </button>
+                  </div>
+                  {isOpen && (
+                    <table className="table compact proc-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 28 }}></th>
+                          <th>PID</th>
+                          <th>User</th>
+                          <th>CPU%</th>
+                          <th>RSS</th>
+                          <th>Private</th>
+                          <th>Uptime</th>
+                          <th>Path</th>
+                          <th style={{ width: 70 }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {g.items
+                          .slice()
+                          .sort((a, b) => b.rssBytes - a.rssBytes)
+                          .map((r) => {
+                            const isSel = selected.has(r.pid);
+                            return (
+                              <tr
+                                key={r.pid}
+                                className={isSel ? 'selected' : undefined}
+                              >
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={isSel}
+                                    onChange={() => toggleSelect(r.pid)}
+                                  />
+                                </td>
+                                <td className="mono">{r.pid}</td>
+                                <td>{r.user || '—'}</td>
+                                <td className="mono">
+                                  {r.cpuPercent.toFixed(1)}
+                                </td>
+                                <td className="mono">
+                                  {formatBytes(r.rssBytes)}
+                                </td>
+                                <td className="mono">
+                                  {formatBytes(r.privateBytes)}
+                                </td>
+                                <td className="mono">
+                                  {r.uptimeSeconds >= 0
+                                    ? formatDuration(r.uptimeSeconds)
+                                    : '—'}
+                                </td>
+                                <td className="mono" title={r.path}>
+                                  {r.path ? truncatePath(r.path) : '—'}
+                                </td>
+                                <td>
+                                  <button
+                                    className="danger"
+                                    onClick={() => killOne(r.pid)}
+                                  >
+                                    Kill
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          // Tree view
+          <>
+            <div className="toolbar subtle">
+              <button className="ghost" onClick={expandAllTree}>
+                Expand all
+              </button>
+              <button className="ghost" onClick={collapseAllTree}>
+                Collapse all
+              </button>
+              <span className="hint">
+                Tree built from parent PID. Roots are processes whose
+                parent is not in this snapshot.
+              </span>
+            </div>
+            <table className="table proc-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 28 }}>
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                  <th>Name (PID)</th>
+                  <th>User</th>
+                  <th>CPU%</th>
+                  <th>RSS</th>
+                  <th>Private</th>
+                  <th>Thr</th>
+                  <th>Uptime</th>
+                  <th>Path</th>
+                  <th style={{ width: 70 }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {flattenTree(tree).map((n) => {
+                  const r = n.entry;
+                  const hasKids = n.children.length > 0;
+                  const isOpen =
+                    expanded.has('tree-all') ||
+                    expanded.has(`tree-${r.pid}`);
+                  const isSel = selected.has(r.pid);
+                  const isMatch = matchedPids.has(r.pid);
+                  const cls = [
+                    isSel ? 'selected' : '',
+                    isMatch ? 'proc-match' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
+                  return (
+                    <tr key={r.pid} className={cls || undefined}>
                       <td>
                         <input
                           type="checkbox"
-                          checked={panelChecked.has(r.pid)}
-                          onChange={() => togglePanelPid(r.pid)}
+                          checked={isSel}
+                          onChange={() => toggleSelect(r.pid)}
                         />
                       </td>
-                      <td className="mono">{r.pid}</td>
-                      <td title={r.commandLine || r.name}>{r.name}</td>
+                      <td
+                        style={{ paddingLeft: 6 + n.depth * 18 }}
+                        title={r.commandLine || r.name}
+                      >
+                        {hasKids ? (
+                          <button
+                            className="tree-toggle"
+                            onClick={() =>
+                              toggleExpand(`tree-${r.pid}`)
+                            }
+                            aria-label={isOpen ? 'Collapse' : 'Expand'}
+                          >
+                            {isOpen ? '−' : '+'}
+                          </button>
+                        ) : (
+                          <span className="tree-toggle leaf">·</span>
+                        )}
+                        <span className="mono">{r.name}</span>{' '}
+                        <span className="tree-pid mono">({r.pid})</span>
+                      </td>
                       <td>{r.user || '—'}</td>
                       <td className="mono">{r.cpuPercent.toFixed(1)}</td>
                       <td className="mono">{formatBytes(r.rssBytes)}</td>
+                      <td className="mono">{formatBytes(r.privateBytes)}</td>
+                      <td className="mono">
+                        {r.threadCount >= 0 ? r.threadCount : '—'}
+                      </td>
+                      <td className="mono">
+                        {r.uptimeSeconds >= 0
+                          ? formatDuration(r.uptimeSeconds)
+                          : '—'}
+                      </td>
                       <td className="mono" title={r.path}>
                         {r.path ? truncatePath(r.path) : '—'}
                       </td>
+                      <td>
+                        <button
+                          className="danger"
+                          onClick={() => killOne(r.pid)}
+                        >
+                          Kill
+                        </button>
+                      </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
     </>
   );
 };
