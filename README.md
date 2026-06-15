@@ -25,7 +25,7 @@
 
 | Tab | 解决什么 | 关键操作 |
 | --- | --- | --- |
-| **Ports** | 端口被谁占了，父进程是谁 | 过滤 / 正则高亮 / Group by EXE / 多选 Kill |
+| **Ports** | 端口被谁占了，父进程是谁 | 过滤 / 正则高亮 / Group by App / 多选 Kill |
 | **Processes** | 谁吃 CPU、谁吃内存，怎么**批量释放** | Flat·Group·Tree 三视图 + 行级 checkbox + 整组 Kill |
 | **Folder Locks** *(Win)* | 谁锁着我目录里的文件 | 拖文件夹进窗口立即扫描 + 多选 Kill |
 
@@ -45,7 +45,7 @@
 
 ![folder-locks](docs/screenshots/folder-locks.png)
 
-> 更多截图（Group-by-EXE、Tree 视图、悬浮迷你面板）见 [docs/features.md](docs/features.md)。
+> 更多截图（Group-by-App、Tree 视图、悬浮迷你面板）见 [docs/features.md](docs/features.md)。
 
 ## 下载 Download
 

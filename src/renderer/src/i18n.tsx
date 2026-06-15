@@ -92,7 +92,7 @@ export const dicts: Record<Lang, Dict> = {
 
     'ports.filterPlaceholder': 'Filter by port, pid, name, path, state, parent...',
     'ports.view.flat': 'Flat',
-    'ports.view.groupExe': 'Group by EXE',
+    'ports.view.groupExe': 'Group by App',
     'ports.col.proto': 'Protocol',
     'ports.col.local': 'Local',
     'ports.col.remote': 'Remote',
@@ -168,7 +168,11 @@ export const dicts: Record<Lang, Dict> = {
     'floating.hide': 'Hide',
     'floating.placeholder': 'port / pid / name',
     'floating.empty': 'No matches',
-    'floating.loading': 'Loading...'
+    'floating.loading': 'Loading...',
+    'floating.tab.ports': 'Ports',
+    'floating.tab.procs': 'Top Procs',
+    'floating.procs.empty': 'No processes',
+    'floating.procs.sub': 'Top by RSS · {n} procs · {mem}'
   },
   zh: {
     'tab.ports': '端口',
@@ -331,7 +335,11 @@ export const dicts: Record<Lang, Dict> = {
     'floating.hide': '隐藏',
     'floating.placeholder': '端口 / PID / 名称',
     'floating.empty': '无匹配',
-    'floating.loading': '加载中...'
+    'floating.loading': '加载中...',
+    'floating.tab.ports': '端口',
+    'floating.tab.procs': '占用进程',
+    'floating.procs.empty': '暂无进程数据',
+    'floating.procs.sub': '按 RSS 排序 · 共 {n} 个 · {mem}'
   }
 };
 

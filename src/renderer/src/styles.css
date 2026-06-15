@@ -500,6 +500,83 @@ input[type='text']:focus, input[type='search']:focus {
   border-bottom: 1px solid var(--border);
 }
 
+/* Tab bar inside the floating mini panel. We make it sit between the
+   header (which is the drag region) and the search box so the user can
+   flip between "ports" and "top processes" without resizing the panel. */
+.floating-tabs {
+  display: flex;
+  -webkit-app-region: no-drag;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.floating-tabs button {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.floating-tabs button:hover:not(:disabled) {
+  background: var(--bg-soft);
+  color: var(--text);
+  /* Override the global "primary-tinted" hover so the inactive tab
+     doesn't fight the active one for attention. */
+  border-color: transparent;
+}
+.floating-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--bg-soft);
+}
+.floating-tab-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 7px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.floating-tabs button.active .floating-tab-count {
+  background: rgba(79, 140, 255, 0.18);
+  color: var(--accent);
+  border-color: rgba(79, 140, 255, 0.4);
+}
+
+/* One-line memory summary shown above the process list. Kept very
+   compact because the mini panel is only ~340px wide. */
+.floating-procs-sub {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px dashed var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Override the default `margin-left: 8px` from .lang-switch so the
+   language toggle sits flush in the floating header without pushing the
+   action buttons off the right edge of the narrow panel. */
+.floating-header .lang-switch.floating-lang {
+  margin-left: 6px;
+  margin-right: 4px;
+}
+.floating-header .lang-switch.floating-lang button {
+  -webkit-app-region: no-drag;
+}
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb {

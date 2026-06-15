@@ -174,9 +174,20 @@ function createFloatingWindow(): void {
 function createTray(): void {
   // Prefer the bundled brand icon. Fall back to a 1x1 transparent PNG only
   // when the asset is missing (e.g. during a dev run without `build/`).
+  //
+  // Platform notes:
+  //  - Windows: the menubar/tray is a small 16x16 area; the existing
+  //    monochrome `tray.png` is intentional there.
+  //  - macOS: the system status bar can display a colored icon as long as
+  //    we (a) do NOT mark it as a template image and (b) downscale the
+  //    full-color `icon.png` to ~18px. Using `tray.png` here produces the
+  //    washed-out / system-tinted look the user noticed; use the regular
+  //    brand icon instead so it appears as a normal app logo.
   let trayImage: Electron.NativeImage | null = null;
   const trayFile =
-    resolveBrandAsset('tray.png') || resolveBrandAsset('icon.png');
+    process.platform === 'darwin'
+      ? resolveBrandAsset('icon.png') || resolveBrandAsset('tray.png')
+      : resolveBrandAsset('tray.png') || resolveBrandAsset('icon.png');
   if (trayFile) {
     try {
       const img = nativeImage.createFromPath(trayFile);
@@ -185,6 +196,12 @@ function createTray(): void {
           process.platform === 'darwin'
             ? img.resize({ width: 18, height: 18 })
             : img.resize({ width: 16, height: 16 });
+        if (process.platform === 'darwin') {
+          // Force "regular" (full-color) rendering instead of macOS's
+          // automatic template treatment that would tint the icon to
+          // match the menubar foreground color.
+          trayImage.setTemplateImage(false);
+        }
       }
     } catch {
       trayImage = null;
@@ -334,6 +351,22 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+  // macOS: the Dock icon is decoupled from BrowserWindow.icon. Without an
+  // explicit setIcon call, an unpackaged `npm start` / `electron .` run
+  // shows the generic Electron diamond instead of our brand logo. Setting
+  // it here makes the Dock match the bundled .icns once packaged AND the
+  // PNG during development.
+  if (process.platform === 'darwin' && app.dock) {
+    const dockImage = getAppIcon();
+    if (dockImage) {
+      try {
+        app.dock.setIcon(dockImage);
+      } catch {
+        /* non-fatal: e.g. missing build/icon.png */
+      }
+    }
+  }
+
   registerIpc();
   createMainWindow();
   createTray();
@@ -420,11 +453,14 @@ async function captureScreenshots(outDir: string): Promise<void> {
   await capturePNG(win, pathMod.join(outDir, 'main-flat.png'));
   console.log('[shot] main-flat.png saved');
 
-  // Switch to "Group by EXE"
+  // Switch to "Group by App"
   await win.webContents.executeJavaScript(
     `(() => {
        const buttons = Array.from(document.querySelectorAll('.view-switch button'));
-       const target = buttons.find(b => b.textContent && b.textContent.trim() === 'Group by EXE');
+       const target = buttons.find(b => {
+         const t = (b.textContent || '').trim();
+         return t === 'Group by App' || t === 'Group by EXE' || t === '按程序分组';
+       });
        if (target) target.click();
        return !!target;
      })()`

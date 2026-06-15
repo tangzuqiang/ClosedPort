@@ -15,7 +15,7 @@ data — there is no mocking or PS work involved.
 Files:
 
 - `main-flat.png`     — Main window, flat view with the `Started by` column
-- `main-grouped.png`  — Main window, "Group by EXE" view, three groups expanded
+- `main-grouped.png`  — Main window, "Group by App" view, three groups expanded
 - `folder-locks.png`  — Folder lock scanner tab. Only meaningful on Windows;
   on macOS / Linux this tab is intentionally inert (see README FAQ).
 - `floating.png`      — Always-on-top mini panel

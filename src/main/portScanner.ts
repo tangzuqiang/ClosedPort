@@ -38,7 +38,7 @@ export async function listPorts(): Promise<PortEntry[]> {
     // the kernel (PID 4 — "System") or by the System Idle Process
     // (PID 0 — used by netstat as a placeholder for sockets that have
     // no owning process anymore, e.g. lingering TIME_WAIT entries).
-    // Without this, the "Group by EXE" view shows a confusing
+    // Without this, the "Group by App" view shows a confusing
     // "Unknown · 0 pids · N ports" bucket. Label them explicitly.
     if (platform === 'win32' && !processName) {
       if (entry.pid === 0) {

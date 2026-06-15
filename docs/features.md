@@ -8,11 +8,11 @@ ClosedPort 的完整功能说明。简要介绍请回到 [项目主 README](../R
 
 - **协议**：TCP / UDP / TCP6 / UDP6 监听与连接，附 PID、进程名、可执行文件路径、用户、命令行
 - **Started by（父进程）**：每条记录显示父进程名 + PPID，定位"这个端口到底是哪个家伙拉起来的子进程占住的"
-- **Group by EXE**：一个进程占多个端口时聚合显示，整组一键 Kill；支持 Name / Ports / PIDs 升降序
+- **Group by App**：一个进程占多个端口时聚合显示，整组一键 Kill；支持 Name / Ports / PIDs 升降序
 - **正则高亮 + 多选 Kill**：正则匹配的行高亮，可继续手动 checkbox 增减选择
 - **快速过滤**：任何关键字（PID / 名 / 用户 / 命令行）即时筛选
 
-**Group by EXE 视图**：
+**Group by App 视图**：
 
 ![ports-grouped](screenshots/main-grouped.png)
 

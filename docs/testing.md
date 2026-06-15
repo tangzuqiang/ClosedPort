@@ -50,7 +50,7 @@ npm run build; npx electron .
 $env:CLOSEDPORT_SCREENSHOT_DIR = $null
 ```
 
-它会依次切到 Flat / Group by EXE / Folder Locks / Floating 四个 UI 状态，每个状态调用一次 `BrowserWindow.capturePage()` 写 PNG，然后退出。
+它会依次切到 Flat / Group by App / Folder Locks / Floating 四个 UI 状态，每个状态调用一次 `BrowserWindow.capturePage()` 写 PNG，然后退出。
 
 ## 提交前必跑
 

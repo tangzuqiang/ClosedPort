@@ -53,7 +53,7 @@ npx electron .
 - 每个子进程随机绑一个 TCP 端口
 - 在 Flat 列表顶部以橙色高亮 + `TEST` 徽章浮起
 
-**它们不会自动清理。** 用完点 Kill 或在 Group by EXE 视图整组 Kill 释放。
+**它们不会自动清理。** 用完点 Kill 或在 Group by App 视图整组 Kill 释放。
 
 > 如果点了没反应：[src/main/devTools.ts](../src/main/devTools.ts) 必须把 entry.js 路径作为 `argv[1]` 传进 `spawn`，否则 `ELECTRON_RUN_AS_NODE=1` 会让 Electron 进入 Node REPL，永远不会进 fake-holder 分支。改了 devTools 又踩到 "No test ports were spawned"，先检查这个。
 
