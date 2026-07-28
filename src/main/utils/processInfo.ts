@@ -1,5 +1,5 @@
 import os from 'os';
-import { execCommand } from './exec';
+import { execCommand, POWERSHELL_UTF8_PREAMBLE } from './exec';
 
 export interface ProcessDetail {
   pid: number;
@@ -122,6 +122,7 @@ async function enrichWithPowerShell(pids: number[]): Promise<boolean> {
   // ConvertTo-Json with -Compress keeps stdout small and easy to parse.
   // -Depth 2 is enough for our flat object.
   const script =
+    POWERSHELL_UTF8_PREAMBLE +
     `$ErrorActionPreference='SilentlyContinue';` +
     `Get-CimInstance Win32_Process -Filter "${filter}" |` +
     ` Select-Object ProcessId,Name,ExecutablePath,CommandLine,ParentProcessId |` +
@@ -149,10 +150,14 @@ async function enrichWithPowerShell(pids: number[]): Promise<boolean> {
     const existing: ProcessDetail = cache.get(pid) ?? { pid };
     const path = typeof row.ExecutablePath === 'string' ? row.ExecutablePath : undefined;
     const cmd = typeof row.CommandLine === 'string' ? row.CommandLine : undefined;
+    const cimName = typeof row.Name === 'string' && row.Name ? row.Name : undefined;
     const ppid = Number(row.ParentProcessId);
+    // Prefer CIM Name over tasklist: once UTF-8 is forced, CIM is the
+    // authoritative Unicode source; tasklist may still have been decoded
+    // via the ANSI fallback and should not win when both are present.
     cache.set(pid, {
       ...existing,
-      name: existing.name ?? (typeof row.Name === 'string' ? row.Name : undefined),
+      name: cimName ?? existing.name,
       path: path || existing.path,
       commandLine: cmd || existing.commandLine,
       parentPid: Number.isFinite(ppid) ? ppid : existing.parentPid

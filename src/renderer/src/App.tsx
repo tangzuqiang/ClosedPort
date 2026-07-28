@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import type { PortEntry, ProcessEntry, SystemInfo, SystemMemoryInfo } from '../../shared/types';
+import type {
+  PortEntry,
+  ProcessEntry,
+  StartupEntry,
+  StartupSource,
+  SystemInfo,
+  SystemMemoryInfo
+} from '../../shared/types';
 import { LanguageContext, useT } from './i18n';
 
 type SortKey =
@@ -20,7 +27,9 @@ type ViewMode = 'flat' | 'grouped';
 type GroupSortKey = 'name' | 'ports' | 'pids';
 
 const App: React.FC = () => {
-  const [tab, setTab] = useState<'ports' | 'folder' | 'processes'>('ports');
+  const [tab, setTab] = useState<'ports' | 'folder' | 'processes' | 'startup'>(
+    'ports'
+  );
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const t = useT();
   const { lang, setLang } = React.useContext(LanguageContext);
@@ -90,6 +99,13 @@ const App: React.FC = () => {
           >
             {t('tab.processes')}
           </div>
+          <div
+            className={`tab ${tab === 'startup' ? 'active' : ''}`}
+            onClick={() => setTab('startup')}
+          >
+            {t('tab.startup')}{' '}
+            {systemInfo?.platform !== 'win32' && t('tab.startup.winOnly')}
+          </div>
         </div>
         <div className="spacer" />
         {systemInfo && (
@@ -140,6 +156,17 @@ const App: React.FC = () => {
         }}
       >
         <ProcessesView />
+      </div>
+      <div
+        className="tab-pane"
+        style={{
+          display: tab === 'startup' ? 'flex' : 'none',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0
+        }}
+      >
+        <StartupView systemInfo={systemInfo} />
       </div>
     </div>
   );
@@ -1579,7 +1606,7 @@ const ProcessesView: React.FC = () => {
                 </th>
                 <th onClick={() => toggleSort('uptimeSeconds')}>{tr('proc.col.uptime')}</th>
                 <th>{tr('proc.col.path')}</th>
-                <th style={{ width: 70 }}>{tr('proc.col.action')}</th>
+                <th style={{ width: 130 }}>{tr('proc.col.action')}</th>
               </tr>
             </thead>
             <tbody>
@@ -1626,9 +1653,21 @@ const ProcessesView: React.FC = () => {
                       {r.path ? truncatePath(r.path) : '—'}
                     </td>
                     <td>
-                      <button className="danger" onClick={() => killOne(r.pid)}>
-                        {tr('common.kill')}
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          className="ghost"
+                          disabled={!r.path}
+                          title={tr('startup.openTitle')}
+                          onClick={() =>
+                            r.path && window.closedport.revealInFolder(r.path)
+                          }
+                        >
+                          {tr('common.open')}
+                        </button>
+                        <button className="danger" onClick={() => killOne(r.pid)}>
+                          {tr('common.kill')}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1691,7 +1730,7 @@ const ProcessesView: React.FC = () => {
                           <th>{tr('proc.col.private')}</th>
                           <th>{tr('proc.col.uptime')}</th>
                           <th>{tr('proc.col.path')}</th>
-                          <th style={{ width: 70 }}>{tr('proc.col.action')}</th>
+                          <th style={{ width: 130 }}>{tr('proc.col.action')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1732,12 +1771,25 @@ const ProcessesView: React.FC = () => {
                                   {r.path ? truncatePath(r.path) : '—'}
                                 </td>
                                 <td>
-                                  <button
-                                    className="danger"
-                                    onClick={() => killOne(r.pid)}
-                                  >
-                                    {tr('common.kill')}
-                                  </button>
+                                  <div className="row-actions">
+                                    <button
+                                      className="ghost"
+                                      disabled={!r.path}
+                                      title={tr('startup.openTitle')}
+                                      onClick={() =>
+                                        r.path &&
+                                        window.closedport.revealInFolder(r.path)
+                                      }
+                                    >
+                                      {tr('common.open')}
+                                    </button>
+                                    <button
+                                      className="danger"
+                                      onClick={() => killOne(r.pid)}
+                                    >
+                                      {tr('common.kill')}
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -1781,7 +1833,7 @@ const ProcessesView: React.FC = () => {
                   <th>{tr('proc.col.thr')}</th>
                   <th>{tr('proc.col.uptime')}</th>
                   <th>{tr('proc.col.path')}</th>
-                  <th style={{ width: 70 }}>{tr('proc.col.action')}</th>
+                  <th style={{ width: 130 }}>{tr('proc.col.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1844,12 +1896,25 @@ const ProcessesView: React.FC = () => {
                         {r.path ? truncatePath(r.path) : '—'}
                       </td>
                       <td>
-                        <button
-                          className="danger"
-                          onClick={() => killOne(r.pid)}
-                        >
-                          {tr('common.kill')}
-                        </button>
+                        <div className="row-actions">
+                          <button
+                            className="ghost"
+                            disabled={!r.path}
+                            title={tr('startup.openTitle')}
+                            onClick={() =>
+                              r.path &&
+                              window.closedport.revealInFolder(r.path)
+                            }
+                          >
+                            {tr('common.open')}
+                          </button>
+                          <button
+                            className="danger"
+                            onClick={() => killOne(r.pid)}
+                          >
+                            {tr('common.kill')}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2008,6 +2073,275 @@ const MemoryBar: React.FC<{ mem: SystemMemoryInfo | null }> = ({ mem }) => {
         )}
       </div>
     </div>
+  );
+};
+
+// ---------------- Startups Tab (Windows) ----------------
+
+const STARTUP_SOURCES: Array<StartupSource | 'all'> = [
+  'all',
+  'registry',
+  'folder',
+  'task',
+  'service',
+  'browser'
+];
+
+const StartupView: React.FC<{ systemInfo: SystemInfo | null }> = ({
+  systemInfo
+}) => {
+  const t = useT();
+  const [rows, setRows] = useState<StartupEntry[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [source, setSource] = useState<StartupSource | 'all'>('all');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const isWin = systemInfo?.platform === 'win32';
+  const isAdmin = !!systemInfo?.isAdmin;
+
+  const refresh = useCallback(async () => {
+    if (!isWin) return;
+    setLoading(true);
+    try {
+      const res = await window.closedport.listStartups();
+      setRows(res.entries || []);
+      setWarnings(res.warnings || []);
+    } catch (e) {
+      setWarnings([(e as Error).message || String(e)]);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [isWin]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (source !== 'all' && r.source !== source) return false;
+      if (!q) return true;
+      return (
+        r.name.toLowerCase().includes(q) ||
+        r.location.toLowerCase().includes(q) ||
+        r.command.toLowerCase().includes(q) ||
+        (r.publisher || '').toLowerCase().includes(q) ||
+        r.source.includes(q)
+      );
+    });
+  }, [rows, filter, source]);
+
+  const sourceLabel = (s: StartupSource | 'all') =>
+    t(`startup.source.${s}`);
+
+  const canMutate = (r: StartupEntry) => {
+    if (r.protected) return false;
+    if (r.needsAdmin && !isAdmin) return false;
+    return true;
+  };
+
+  const onToggle = async (r: StartupEntry) => {
+    if (!canMutate(r)) {
+      alert(
+        r.protected
+          ? t('startup.protected')
+          : t('startup.needsAdmin')
+      );
+      return;
+    }
+    setBusyId(r.id);
+    try {
+      const res = await window.closedport.setStartupEnabled(r.id, !r.enabled);
+      if (!res.success) {
+        alert(`${t('startup.toggleFailed')} ${res.message || ''}`);
+      } else {
+        await refresh();
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onEdit = async (r: StartupEntry) => {
+    if (!r.canEdit || !canMutate(r)) return;
+    const next = window.prompt(t('startup.editPrompt'), r.command);
+    if (next == null) return;
+    if (next === r.command) return;
+    setBusyId(r.id);
+    try {
+      const res = await window.closedport.updateStartup(r.id, next);
+      if (!res.success) {
+        alert(`${t('startup.updateFailed')} ${res.message || ''}`);
+      } else {
+        await refresh();
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDelete = async (r: StartupEntry) => {
+    if (!r.canDelete || !canMutate(r)) return;
+    const msg = t('startup.deleteConfirm').replace('{name}', r.name);
+    if (!window.confirm(msg)) return;
+    setBusyId(r.id);
+    try {
+      const res = await window.closedport.deleteStartup(r.id);
+      if (!res.success) {
+        alert(`${t('startup.deleteFailed')} ${res.message || ''}`);
+      } else {
+        if (r.source === 'browser' && res.message) {
+          alert(t('startup.browserRestartHint'));
+        }
+        await refresh();
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (!isWin) {
+    return <div className="empty">{t('startup.winOnly')}</div>;
+  }
+
+  return (
+    <>
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder={t('startup.filterPlaceholder')}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          style={{ maxWidth: 360 }}
+        />
+        <div className="view-switch">
+          {STARTUP_SOURCES.map((s) => (
+            <button
+              key={s}
+              className={source === s ? 'primary' : 'ghost'}
+              onClick={() => setSource(s)}
+            >
+              {sourceLabel(s)}
+            </button>
+          ))}
+        </div>
+        <button onClick={refresh} disabled={loading}>
+          {loading ? t('common.refreshing') : t('common.refresh')}
+        </button>
+        <div className="spacer" />
+        <span className="badge">
+          {filtered.length} {t('startup.entries')}
+        </span>
+        {!isAdmin && (
+          <span className="badge warn" title={t('startup.needsAdmin')}>
+            {t('common.standard')}
+          </span>
+        )}
+      </div>
+      {warnings.length > 0 && (
+        <div className="banner warn">
+          {warnings.map((w, i) => (
+            <div key={i}>{w}</div>
+          ))}
+        </div>
+      )}
+      <div className="content">
+        {loading && rows.length === 0 ? (
+          <div className="empty">{t('startup.loading')}</div>
+        ) : filtered.length === 0 ? (
+          <div className="empty">{t('startup.empty')}</div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: 52 }}>{t('startup.col.enabled')}</th>
+                <th>{t('startup.col.name')}</th>
+                <th style={{ width: 110 }}>{t('startup.col.source')}</th>
+                <th>{t('startup.col.location')}</th>
+                <th>{t('startup.col.command')}</th>
+                <th style={{ width: 120 }}>{t('startup.col.publisher')}</th>
+                <th style={{ width: 200 }}>{t('startup.col.action')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => {
+                const mutateOk = canMutate(r);
+                const busy = busyId === r.id;
+                return (
+                  <tr key={r.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={r.enabled}
+                        disabled={busy || !mutateOk}
+                        title={
+                          r.protected
+                            ? t('startup.protected')
+                            : r.needsAdmin && !isAdmin
+                              ? t('startup.needsAdmin')
+                              : r.enabled
+                                ? t('common.enable')
+                                : t('common.disable')
+                        }
+                        onChange={() => onToggle(r)}
+                      />
+                    </td>
+                    <td title={r.name}>
+                      {r.name}
+                      {r.protected ? (
+                        <span className="badge warn" style={{ marginLeft: 6 }}>
+                          !
+                        </span>
+                      ) : null}
+                    </td>
+                    <td>{sourceLabel(r.source)}</td>
+                    <td className="mono" title={r.location}>
+                      {truncatePath(r.location)}
+                    </td>
+                    <td className="mono" title={r.command}>
+                      {truncatePath(r.command)}
+                    </td>
+                    <td title={r.publisher}>{r.publisher || '—'}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="ghost"
+                          disabled={!r.revealPath || busy}
+                          title={t('startup.openTitle')}
+                          onClick={() =>
+                            r.revealPath &&
+                            window.closedport.revealInFolder(r.revealPath)
+                          }
+                        >
+                          {t('common.open')}
+                        </button>
+                        <button
+                          className="ghost"
+                          disabled={!r.canEdit || !mutateOk || busy}
+                          onClick={() => onEdit(r)}
+                        >
+                          {t('common.edit')}
+                        </button>
+                        <button
+                          className="danger"
+                          disabled={!r.canDelete || !mutateOk || busy}
+                          onClick={() => onDelete(r)}
+                        >
+                          {t('common.delete')}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
   );
 };
 

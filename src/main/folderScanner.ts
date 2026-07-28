@@ -2,7 +2,12 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { app } from 'electron';
-import { execCommand, execFileCommand, tryExec } from './utils/exec';
+import {
+  execCommand,
+  execFileCommand,
+  tryExec,
+  POWERSHELL_UTF8_PREAMBLE
+} from './utils/exec';
 import { getProcessDetail } from './utils/processInfo';
 import type { FolderHandleEntry } from '../shared/types';
 
@@ -199,9 +204,9 @@ async function scanWithRestartManager(
     .join(',');
 
   const script = `
+${POWERSHELL_UTF8_PREAMBLE}
 $ErrorActionPreference = 'SilentlyContinue';
-$src = @'
-using System;
+$src = @'using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class Rm {

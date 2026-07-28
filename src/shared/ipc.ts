@@ -10,7 +10,11 @@ export const IPC_CHANNELS = {
   TOGGLE_FLOATING: 'window:toggleFloating',
   PICK_FOLDER: 'dialog:pickFolder',
   REVEAL_IN_FOLDER: 'shell:revealInFolder',
-  SPAWN_TEST_PORTS: 'devtools:spawnTestPorts'
+  SPAWN_TEST_PORTS: 'devtools:spawnTestPorts',
+  LIST_STARTUPS: 'startup:list',
+  SET_STARTUP_ENABLED: 'startup:setEnabled',
+  UPDATE_STARTUP: 'startup:update',
+  DELETE_STARTUP: 'startup:delete'
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

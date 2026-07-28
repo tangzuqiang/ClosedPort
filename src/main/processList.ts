@@ -1,5 +1,9 @@
 import os from 'os';
-import { execCommand, execFileCommand } from './utils/exec';
+import {
+  execCommand,
+  execFileCommand,
+  POWERSHELL_UTF8_PREAMBLE
+} from './utils/exec';
 import type { ProcessEntry, ProcessListResult } from '../shared/types';
 
 /**
@@ -61,6 +65,7 @@ async function listProcessesWindows(): Promise<ProcessListResult> {
   // blobs back to Node and re-merging them there. We index the CIM
   // dictionary by ProcessId for O(1) lookups.
   const script = [
+    POWERSHELL_UTF8_PREAMBLE,
     `$ErrorActionPreference='SilentlyContinue';`,
     `$cim = @{};`,
     `Get-CimInstance Win32_Process | ForEach-Object { $cim[[int]$_.ProcessId] = $_ };`,

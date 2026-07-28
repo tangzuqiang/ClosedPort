@@ -1,6 +1,10 @@
 import os from 'os';
 import fs from 'fs';
-import { execCommand, execFileCommand } from './utils/exec';
+import {
+  execCommand,
+  execFileCommand,
+  POWERSHELL_UTF8_PREAMBLE
+} from './utils/exec';
 import type { SystemMemoryInfo } from '../shared/types';
 
 export async function listSystemMemory(): Promise<SystemMemoryInfo> {
@@ -36,6 +40,7 @@ function emptyResult(
 
 async function memWindows(): Promise<SystemMemoryInfo> {
   const script = [
+    POWERSHELL_UTF8_PREAMBLE,
     `$ErrorActionPreference='SilentlyContinue';`,
     `$os = Get-CimInstance Win32_OperatingSystem;`,
     `$standby = 0; $cache = 0; $modified = 0;`,

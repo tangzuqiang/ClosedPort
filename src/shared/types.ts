@@ -147,6 +147,45 @@ export interface ScanFolderOptions {
   recursive?: boolean;
 }
 
+/** Windows startup-item source buckets shown in the Startups tab. */
+export type StartupSource =
+  | 'registry'
+  | 'folder'
+  | 'task'
+  | 'service'
+  | 'browser';
+
+export interface StartupEntry {
+  /** Stable id used by setEnabled / update / delete IPC. */
+  id: string;
+  name: string;
+  source: StartupSource;
+  /** Human-readable origin, e.g. HKCU\\...\\Run or Chrome / Default. */
+  location: string;
+  /** Command line, lnk target, task action, service PathName, or extension id. */
+  command: string;
+  enabled: boolean;
+  /** Absolute path best suited for revealInFolder (exe / lnk / extension dir). */
+  revealPath?: string;
+  publisher?: string;
+  canEdit: boolean;
+  canDelete: boolean;
+  needsAdmin: boolean;
+  /** True for critical services that must not be disabled. */
+  protected?: boolean;
+}
+
+export interface StartupListResult {
+  entries: StartupEntry[];
+  capturedAt: number;
+  warnings: string[];
+}
+
+export interface StartupMutationResult {
+  success: boolean;
+  message?: string;
+}
+
 export interface ApiSurface {
   listPorts(options?: ListPortsOptions): Promise<PortEntry[]>;
   listProcesses(options?: ListProcessesOptions): Promise<ProcessListResult>;
@@ -160,6 +199,10 @@ export interface ApiSurface {
   pickFolder(): Promise<string | null>;
   revealInFolder(filePath: string): Promise<void>;
   spawnTestPorts(count: number): Promise<SpawnedTestPort[]>;
+  listStartups(): Promise<StartupListResult>;
+  setStartupEnabled(id: string, enabled: boolean): Promise<StartupMutationResult>;
+  updateStartup(id: string, command: string): Promise<StartupMutationResult>;
+  deleteStartup(id: string): Promise<StartupMutationResult>;
   /**
    * Resolve a renderer-side {@link File} (typically from a drag-and-drop
    * payload) to its absolute filesystem path. Uses Electron's

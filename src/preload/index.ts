@@ -28,6 +28,13 @@ const api: ApiSurface = {
     ipcRenderer.invoke(IPC_CHANNELS.REVEAL_IN_FOLDER, filePath),
   spawnTestPorts: (count: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.SPAWN_TEST_PORTS, count),
+  listStartups: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_STARTUPS),
+  setStartupEnabled: (id: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SET_STARTUP_ENABLED, id, enabled),
+  updateStartup: (id: string, command: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATE_STARTUP, id, command),
+  deleteStartup: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DELETE_STARTUP, id),
   // webUtils.getPathForFile is the supported replacement for the
   // deprecated `File.path` property removed in Electron 32. We expose
   // it via the contextBridge so the renderer can resolve a dropped

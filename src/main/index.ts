@@ -17,6 +17,12 @@ import { listSystemMemory } from './systemMemory';
 import { scanFolder, scanFolderEx, isHandleExeAvailable } from './folderScanner';
 import { killProcess, killProcesses } from './killer';
 import { spawnFakePortHolders, killAllFakePortHolders } from './devTools';
+import {
+  listStartups,
+  setStartupEnabled,
+  updateStartup,
+  deleteStartup
+} from './startupManager';
 import { IPC_CHANNELS } from '../shared/ipc';
 import type { SystemInfo } from '../shared/types';
 
@@ -347,6 +353,34 @@ function registerIpc(): void {
     }
     const n = Math.max(1, Math.min(20, Math.floor(count) || 5));
     return spawnFakePortHolders(n);
+  });
+  ipcMain.handle(IPC_CHANNELS.LIST_STARTUPS, async () => listStartups());
+  ipcMain.handle(
+    IPC_CHANNELS.SET_STARTUP_ENABLED,
+    async (_e, id: string, enabled: boolean) => {
+      if (typeof id !== 'string' || id.length > 2048) {
+        return { success: false, message: 'Invalid id' };
+      }
+      return setStartupEnabled(id, !!enabled);
+    }
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.UPDATE_STARTUP,
+    async (_e, id: string, command: string) => {
+      if (typeof id !== 'string' || id.length > 2048) {
+        return { success: false, message: 'Invalid id' };
+      }
+      if (typeof command !== 'string' || command.length > 8192) {
+        return { success: false, message: 'Invalid command' };
+      }
+      return updateStartup(id, command);
+    }
+  );
+  ipcMain.handle(IPC_CHANNELS.DELETE_STARTUP, async (_e, id: string) => {
+    if (typeof id !== 'string' || id.length > 2048) {
+      return { success: false, message: 'Invalid id' };
+    }
+    return deleteStartup(id);
   });
 }
 
